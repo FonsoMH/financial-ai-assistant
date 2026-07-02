@@ -1,0 +1,25 @@
+# Entornos virtuales
+venv/
+ENV/
+env/
+
+# Archivos de configuración con contraseñas y API Keys (CRUCIAL)
+.env
+.env.*
+
+# Base de datos local (La generaremos dinámicamente, no se sube el archivo .db)
+data/*.db
+*.db
+*.sqlite
+
+# Caché de Python y Docker
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.dockerignore
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db

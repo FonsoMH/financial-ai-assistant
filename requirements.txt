@@ -1,0 +1,8 @@
+streamlit
+langchain
+langchain-community
+langchain-core
+langchain-openai
+python-dotenv
+faker
+pandas
