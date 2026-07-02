@@ -2,7 +2,9 @@ streamlit
 langchain
 langchain-community
 langchain-core
-langchain-openai
+langchain-google-genai
 python-dotenv
 faker
 pandas
+streamlit-mic-recorder 
+gTTS
