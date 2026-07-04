@@ -8,9 +8,10 @@ ENV PYTHONUNBUFFERED=1
 # 3. Directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# 4. Instalamos herramientas básicas del sistema
+# 4. Instalamos herramientas básicas del sistema (incluyendo ffmpeg para pydub)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # 5. Copiamos e instalamos las librerías de Python
