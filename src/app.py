@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_mic_recorder import mic_recorder
-from services.audio_service import transcribir_audio_a_texto, sintetizar_texto_a_audio
+from backend.services.audio_service import transcribir_audio_a_texto, sintetizar_texto_a_audio
 
 st.title("🧪 Test del Módulo de Audio (STT + TTS)")
 
