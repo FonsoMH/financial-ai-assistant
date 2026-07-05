@@ -8,3 +8,4 @@ faker
 pandas
 streamlit-mic-recorder 
 gTTS
+pydub
