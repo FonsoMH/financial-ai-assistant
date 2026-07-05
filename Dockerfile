@@ -8,10 +8,15 @@ ENV PYTHONUNBUFFERED=1
 # 3. Directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# 4. Instalamos herramientas básicas del sistema (incluyendo ffmpeg para pydub)
+# 4. Instalamos herramientas básicas del sistema, ffmpeg Y NODE.JS/NPM para React
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ffmpeg \
+    curl \
+    ca-certificates \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # 5. Copiamos e instalamos las librerías de Python
@@ -19,11 +24,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# 6. Copiamos el resto del código del proyecto
+# 6. Copiamos el resto del código del proyecto (incluyendo la futura carpeta frontend)
 COPY . .
 
-# 7. Exponemos el puerto de Streamlit
+# 7. Exponemos el puerto de Streamlit (8501) y el de desarrollo de React (3001)
 EXPOSE 8501
+EXPOSE 3001
 
 # 8. Comando para arrancar la interfaz web
 CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
