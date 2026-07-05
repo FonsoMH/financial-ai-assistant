@@ -17,7 +17,7 @@ if audio_grabado:
     st.write(f"Tamaño: {len(audio_bytes)} bytes")
 
     with st.spinner("Transcribiendo..."):
-        texto = transcribir_audio_a_texto(audio_bytes)
+        texto, error = transcribir_audio_a_texto(audio_bytes)
 
     if texto:
         st.success(f"📝 Texto transcrito: **{texto}**")
@@ -28,4 +28,4 @@ if audio_grabado:
         st.write("🔊 Reproduciendo lo que se transcribió (eco):")
         st.audio(audio_respuesta, format="audio/mp3")
     else:
-        st.error("⚠️ No se pudo transcribir el audio (revisa consola/logs)")
+        st.error(f"⚠️ No se pudo transcribir el audio, **{error}**")
