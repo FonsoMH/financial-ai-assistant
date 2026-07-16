@@ -1,13 +1,14 @@
 services:
-  asistente-financiero:
+  app:
     build: .
     container_name: reto_ia_container
     ports:
-      - "8501:8501"
-      - "3001:3001"
+      - "8000:8000"   # API de Python
+      - "8081:8081"   # Servidor Metro de Expo (React Native)
+      - "19000:19000" # Puerto alternativo de Expo si fuera necesario
     volumes:
       - .:/app
-    env_file:
-      - .env
     environment:
-      - WATCHDOG_USE_POLLING=true
+      - WATCHPACK_POLLING=true
+    stdin_open: true
+    tty: true

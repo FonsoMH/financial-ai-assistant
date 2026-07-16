@@ -1,35 +1,28 @@
-# 1. Imagen base oficial de Python ligera
-FROM python:3.11-slim
+FROM python:3.10-slim
 
-# 2. Configuración para que los logs de Python se vean en tiempo real
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# 3. Directorio de trabajo dentro del contenedor
-WORKDIR /app
-
-# 4. Instalamos herramientas básicas del sistema, ffmpeg Y NODE.JS/NPM para React
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ffmpeg \
+# Instalar Node.js, npm y herramientas del sistema necesarias para audio
+RUN apt-get update && apt-get install -y \
     curl \
-    ca-certificates \
-    gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    ffmpeg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# 5. Copiamos e instalamos las librerías de Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+# Instalar la herramienta global de Expo (EAS CLI)
+RUN npm install -g eas-cli
 
-# 6. Copiamos el resto del código del proyecto (incluyendo la futura carpeta frontend)
+WORKDIR /app
+
+# Instalar dependencias de Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiamos todo el proyecto
 COPY . .
 
-# 7. Exponemos el puerto de Streamlit (8501) y el de desarrollo de React (3001)
-EXPOSE 8501
-EXPOSE 3001
+# Exponemos el puerto 8000 (para la API de Python) 
+# y los puertos 8081 y 19000 (para el servidor de desarrollo de Expo)
+EXPOSE 8000 8081 19000
 
-# 8. Comando para arrancar la interfaz web
-CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Por defecto, arrancamos el backend en el puerto 8000
+CMD ["uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

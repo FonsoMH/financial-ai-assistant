@@ -1,31 +1,19 @@
-import streamlit as st
-from streamlit_mic_recorder import mic_recorder
-from backend.services.audio_service import transcribir_audio_a_texto, sintetizar_texto_a_audio
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-st.title("🧪 Test del Módulo de Audio (STT + TTS)")
+# Creamos la aplicación de FastAPI (esta es la variable "app" que busca Uvicorn)
+app = FastAPI(title="Sofía AI - Backend")
 
-audio_grabado = mic_recorder(
-    start_prompt="🎤 Grabar",
-    stop_prompt="🛑 Detener",
-    just_once=True,
-    key='grabador_mic'
+# Configuramos CORS para que tu móvil (React Native) pueda hablar con Python sin bloqueos de seguridad
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # En desarrollo permitimos todos los orígenes
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-if audio_grabado:
-    audio_bytes = audio_grabado['bytes']
-    st.audio(audio_bytes, format="audio/wav")
-    st.write(f"Tamaño: {len(audio_bytes)} bytes")
-
-    with st.spinner("Transcribiendo..."):
-        texto, error = transcribir_audio_a_texto(audio_bytes)
-
-    if texto:
-        st.success(f"📝 Texto transcrito: **{texto}**")
-
-        with st.spinner("Generando audio de respuesta..."):
-            audio_respuesta = sintetizar_texto_a_audio(texto)
-
-        st.write("🔊 Reproduciendo lo que se transcribió (eco):")
-        st.audio(audio_respuesta, format="audio/mp3")
-    else:
-        st.error(f"⚠️ No se pudo transcribir el audio, **{error}**")
+@app.get("/")
+def read_root():
+    """Ruta de prueba para verificar que la API funciona"""
+    return {"status": "ok", "message": "Backend de Sofía AI funcionando perfectamente"}
