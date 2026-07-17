@@ -1,14 +1,29 @@
 services:
-  app:
+  # --- EL MOTOR (PYTHON + FASTAPI) ---
+  backend:
     build: .
-    container_name: reto_ia_container
+    container_name: reto_ia_backend
     ports:
-      - "8000:8000"   # API de Python
-      - "8081:8081"   # Servidor Metro de Expo (React Native)
-      - "19000:19000" # Puerto alternativo de Expo si fuera necesario
+      - "8000:8000"
     volumes:
       - .:/app
     environment:
       - WATCHPACK_POLLING=true
-    stdin_open: true
-    tty: true
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
+
+  # --- LA APP MÓVIL (REACT NATIVE + EXPO) ---
+  #
+  #frontend:
+  #  build: .
+  #  container_name: reto_ia_frontend
+  #  ports:
+  #    - "8081:8081"
+  #    - "19000:19000"
+  #  volumes:
+  #    - .:/app
+  #  environment:
+  #    - WATCHPACK_POLLING=true
+  #  # Entra directo a la carpeta y arranca el túnel automáticamente
+  #  command: sh -c "cd src/frontend && npx expo start --tunnel"
+  #  stdin_open: true # Mantiene el contenedor atento a tus comandos de teclado
+  #  tty: true        # Permite ver los colores y el código QR bien dibujado
