@@ -89,7 +89,7 @@ export default function VoiceButton() {
   });
   const pulseOpacity = pulse.interpolate({
     inputRange: [1, 1.3],
-    outputRange: [0.8, 0],
+    outputRange: [0.8, 0], //TODO mirar para cambiar esto y que no desaparezca el pulso. (tb tocar tamaño del svg xq se corta)
   });
 
   return (
@@ -145,7 +145,7 @@ export default function VoiceButton() {
         )}
 
         <View style={styles.core}>
-          <Image source={require("../assets/unicaja.png")} style={styles.image} />
+          <Image source={require("../../assets/unicaja.png")} style={styles.image} />
         </View>
       </AnimatedView>
     </Pressable>
