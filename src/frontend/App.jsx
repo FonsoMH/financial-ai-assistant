@@ -1,18 +1,26 @@
 import React, { useState } from "react";
 import { View, StyleSheet, TouchableOpacity, Text } from "react-native";
-// Tus imports reales corregidos
+import { useAssets } from 'expo-asset'; // herramienta de caché
+
 import TextScreen from "./src/screens/TextScreen";
 import VoiceScreen from "./src/screens/VoiceScreen";  
 
 export default function App() {
   const [mode, setMode] = useState('voice'); // 'voice' o 'text'
 
+  const [assets, error] = useAssets([require("./assets/unicaja.png")]);
+
+  if (!assets && !error) {
+    return <View style={[styles.container, { backgroundColor: '#0B0F14' }]} />;
+  }
+
+
   return (
     <View style={styles.container}>
-      {/* 1. Renderizado condicional de la pantalla activa */}
+      {/*Renderizado condicional*/}
       {mode === 'voice' ? <VoiceScreen /> : <TextScreen />}
       
-      {/* 2. Botón rápido para alternar entre modos */}
+      {/* 2. Botón rápido alternar entre modos TODO   VOLVERLO COMPONENTE*/}
       <TouchableOpacity 
         style={styles.toggleButton} 
         onPress={() => setMode(mode === 'voice' ? 'text' : 'voice')}
