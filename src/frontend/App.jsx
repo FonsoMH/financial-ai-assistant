@@ -26,7 +26,7 @@ export default function App() {
         onPress={() => setMode(mode == 'voice' ? 'text' : 'voice')}
       >
         <Text style={styles.toggleText}>
-          {mode === 'voice' ? "💬 Cambiar a Texto" : "🎙️ Cambiar a Voz"}
+          {mode == 'voice' ? "💬 Cambiar a Texto" : "🎙️ Cambiar a Voz"}
         </Text>
       </TouchableOpacity>
     </View>
