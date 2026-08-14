@@ -18,12 +18,12 @@ export default function App() {
   return (
     <View style={styles.container}>
       {/*Renderizado condicional*/}
-      {mode === 'voice' ? <VoiceScreen /> : <TextScreen />}
+      {mode == 'voice' ? <VoiceScreen /> : <TextScreen />}
       
       {/* 2. Botón rápido alternar entre modos TODO   VOLVERLO COMPONENTE*/}
       <TouchableOpacity 
         style={styles.toggleButton} 
-        onPress={() => setMode(mode === 'voice' ? 'text' : 'voice')}
+        onPress={() => setMode(mode == 'voice' ? 'text' : 'voice')}
       >
         <Text style={styles.toggleText}>
           {mode === 'voice' ? "💬 Cambiar a Texto" : "🎙️ Cambiar a Voz"}
