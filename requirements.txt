@@ -13,6 +13,7 @@ python-dotenv
 # --- TRATAMIENTO DE AUDIO EN BACKEND ---
 gTTS
 pydub
+SpeechRecognition
 
 # --- UTILIDADES (Mantén solo si los usas en tu lógica interna) ---
 faker

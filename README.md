@@ -18,5 +18,5 @@ docker compose up backend
 
 (otra terminal)
 cd src/frontend
-npx expo start --tunnel
+npx expo start --lan
 
