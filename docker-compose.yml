@@ -1,13 +1,29 @@
 services:
-  asistente-financiero:
+  # --- EL MOTOR (PYTHON + FASTAPI) ---
+  backend:
     build: .
-    container_name: reto_ia_container
+    container_name: reto_ia_backend
     ports:
-      - "8501:8501"
-      - "3001:3001"
+      - "8000:8000"
     volumes:
       - .:/app
-    env_file:
-      - .env
     environment:
-      - WATCHDOG_USE_POLLING=true
+      - WATCHPACK_POLLING=true
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
+
+  # --- LA APP MÓVIL (REACT NATIVE + EXPO) ---
+  #
+  #frontend:
+  #  build: .
+  #  container_name: reto_ia_frontend
+  #  ports:
+  #    - "8081:8081"
+  #    - "19000:19000"
+  #  volumes:
+  #    - .:/app
+  #  environment:
+  #    - WATCHPACK_POLLING=true
+  #  # Entra directo a la carpeta y arranca el túnel automáticamente
+  #  command: sh -c "cd src/frontend && npx expo start --tunnel"
+  #  stdin_open: true # Mantiene el contenedor atento a tus comandos de teclado
+  #  tty: true        # Permite ver los colores y el código QR bien dibujado

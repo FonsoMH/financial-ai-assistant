@@ -1,31 +1,48 @@
-import streamlit as st
-from streamlit_mic_recorder import mic_recorder
-from services.audio_service import transcribir_audio_a_texto, sintetizar_texto_a_audio
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
-st.title("🧪 Test del Módulo de Audio (STT + TTS)")
+from src.backend.services.audio_service import transcribir_audio_a_texto, sintetizar_texto_a_audio
 
-audio_grabado = mic_recorder(
-    start_prompt="🎤 Grabar",
-    stop_prompt="🛑 Detener",
-    just_once=True,
-    key='grabador_mic'
+app = FastAPI(title="FinancialAI - Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-if audio_grabado:
-    audio_bytes = audio_grabado['bytes']
-    st.audio(audio_bytes, format="audio/wav")
-    st.write(f"Tamaño: {len(audio_bytes)} bytes")
+@app.get("/")
+def read_root():
+    """Ruta de prueba para verificar que la API funciona"""
+    return {"status": "ok", "message": "Backend de Financial AI funcionando perfectamente"}
 
-    with st.spinner("Transcribiendo..."):
-        texto, error = transcribir_audio_a_texto(audio_bytes)
+# --- ENDPOINT PARA CONECTAR CON TU VOICEBUTTON ---
+@app.post("/api/voice")
+async def procesar_voz(file: UploadFile = File(...)):
+    try:
+        audio_bytes = await file.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Audio vacío")
 
-    if texto:
-        st.success(f"📝 Texto transcrito: **{texto}**")
+        texto_usuario, error_stt = transcribir_audio_a_texto(audio_bytes)
 
-        with st.spinner("Generando audio de respuesta..."):
-            audio_respuesta = sintetizar_texto_a_audio(texto)
+        if error_stt:
+            return {"error": error_stt, "status": "failed_stt"}
 
-        st.write("🔊 Reproduciendo lo que se transcribió (eco):")
-        st.audio(audio_respuesta, format="audio/mp3")
-    else:
-        st.error(f"⚠️ No se pudo transcribir el audio, **{error}**")
+        print(f"🎙️ STT: El usuario dijo -> '{texto_usuario}'")
+
+        respuesta_texto = f"He recibido tu audio. Dijiste: {texto_usuario}"
+
+        audio_respuesta_bytes = sintetizar_texto_a_audio(respuesta_texto)
+
+        if not audio_respuesta_bytes:
+            raise HTTPException(status_code=500, detail="Error en el TTS")
+
+        return Response(content=audio_respuesta_bytes, media_type="audio/mp3")
+
+    except Exception as e:
+        print(f"❌ Error en /api/voice: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -12,4 +12,11 @@ Proyecto desarrollado para el desafío técnico de la **Cátedra UGR-Unicaja de 
 ## Arquitectura del Motor de Razonamiento
 El sistema utiliza un enfoque agéntico basado en *Function Calling* (Llamada a herramientas) para interactuar con bases de datos relacionales (Text-to-SQL) y simular operaciones financieras vía API.
 
-## Cómo ejecutar el proyecto (Próximamente)
+## Cómo ejecutar el proyecto
+
+docker compose up backend
+
+(otra terminal)
+cd src/frontend
+npx expo start --lan
+
