@@ -9,7 +9,44 @@ services:
       - .:/app
     environment:
       - WATCHPACK_POLLING=true
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - KOKORO_BASE_URL=http://kokoro:8880
+      - OLLAMA_MODEL=qwen2.5:3b-instruct
     command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - ollama
+      - kokoro
+
+
+      # --- LLM LOCAL (OLLAMA) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: reto_ia_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Comenta si NO tienes GPU NVIDIA y el toolkit instalado en el host:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+
+
+      # --- TTS LOCAL (KOKORO) ---
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest 
+    # Si NO tienes GPU NVIDIA, usa en su lugar:
+    # image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: reto_ia_kokoro
+    ports:
+      - "8880:8880"
+    restart: unless-stopped
 
   # --- LA APP MÓVIL (REACT NATIVE + EXPO) ---
   #
@@ -27,3 +64,6 @@ services:
   #  command: sh -c "cd src/frontend && npx expo start --tunnel"
   #  stdin_open: true # Mantiene el contenedor atento a tus comandos de teclado
   #  tty: true        # Permite ver los colores y el código QR bien dibujado
+
+volumes:
+  ollama_data:

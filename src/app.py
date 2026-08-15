@@ -19,29 +19,36 @@ def read_root():
     """Ruta de prueba para verificar que la API funciona"""
     return {"status": "ok", "message": "Backend de Financial AI funcionando perfectamente"}
 
-# --- ENDPOINT PARA CONECTAR CON TU VOICEBUTTON ---
 @app.post("/api/voice")
 async def procesar_voz(file: UploadFile = File(...)):
     try:
         audio_bytes = await file.read()
+
         if not audio_bytes:
             raise HTTPException(status_code=400, detail="Audio vacío")
 
         texto_usuario, error_stt = transcribir_audio_a_texto(audio_bytes)
 
         if error_stt:
-            return {"error": error_stt, "status": "failed_stt"}
+            print(f"⚠️ STT: {error_stt}")
+            respuesta_texto = texto_usuario
+        else:
+            print(f"🎙️ STT: El usuario dijo -> '{texto_usuario}'")
 
-        print(f"🎙️ STT: El usuario dijo -> '{texto_usuario}'")
-
-        respuesta_texto = f"He recibido tu audio. Dijiste: {texto_usuario}"
+            respuesta_texto = f"Dijiste: {texto_usuario}"
 
         audio_respuesta_bytes = sintetizar_texto_a_audio(respuesta_texto)
 
         if not audio_respuesta_bytes:
             raise HTTPException(status_code=500, detail="Error en el TTS")
 
-        return Response(content=audio_respuesta_bytes, media_type="audio/mp3")
+        return Response(
+            content=audio_respuesta_bytes,
+            media_type="audio/mp3"
+        )
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         print(f"❌ Error en /api/voice: {e}")

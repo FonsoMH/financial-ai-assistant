@@ -40,7 +40,7 @@ const styles = StyleSheet.create({
   },
   toggleButton: {
     position: 'absolute',
-    top: 50, // Lo sitúa arriba en la pantalla para no molestar abajo
+    top: 50,
     right: 20,
     backgroundColor: '#007AFF',
     paddingVertical: 10,

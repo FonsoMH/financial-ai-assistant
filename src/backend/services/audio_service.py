@@ -41,7 +41,7 @@ def transcribir_audio_a_texto(audio_bytes: bytes) -> tuple[str, str | None]:
     except sr.UnknownValueError:
         error = "No se pudo entender el audio (silencio, ruido o volumen muy bajo)."
         print(f"❌ STT: {error}")
-        return "", error
+        return "No te he entendido, repite", error
     except sr.RequestError as e:
         error = f"Error de conexión con la API de Google Speech-to-Text: {e}"
         print(f"❌ STT: {error}")

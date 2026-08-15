@@ -14,7 +14,22 @@ El sistema utiliza un enfoque agéntico basado en *Function Calling* (Llamada a 
 
 ## Cómo ejecutar el proyecto
 
-docker compose up backend
+docker compose up
+
+
+Si no puedes descargar el llm con ollama pull:
+
+Descarga qwen2.5-3b-instruct-q4_k_m.gguf  desde https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF
+
+y luego desde donde has guardado lo descargado haz:
+  docker cp .\qwen2.5-3b-instruct-q4_k_m.gguf reto_ia_ollama:/tmp/model.gguf
+  docker exec -it reto_ia_ollama sh -c "echo 'FROM /tmp/model.gguf' > /tmp/Modelfile"
+  docker exec -it reto_ia_ollama ollama create qwen2.5:3b-instruct -f /tmp/Modelfile
+
+
+
+
+
 
 (otra terminal)
 cd src/frontend
