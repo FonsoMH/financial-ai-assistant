@@ -10,12 +10,12 @@ services:
     environment:
       - WATCHPACK_POLLING=true
       - OLLAMA_BASE_URL=http://ollama:11434
-      - KOKORO_BASE_URL=http://kokoro:8880
       - OLLAMA_MODEL=qwen2.5:3b-instruct
+      - OLLAMA_KEEP_ALIVE=15m
+      
     command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       - ollama
-      - kokoro
 
 
       # --- LLM LOCAL (OLLAMA) ---
@@ -34,18 +34,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    restart: unless-stopped
-
-
-
-      # --- TTS LOCAL (KOKORO) ---
-  kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest 
-    # Si NO tienes GPU NVIDIA, usa en su lugar:
-    # image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
-    container_name: reto_ia_kokoro
-    ports:
-      - "8880:8880"
     restart: unless-stopped
 
   # --- LA APP MÓVIL (REACT NATIVE + EXPO) ---

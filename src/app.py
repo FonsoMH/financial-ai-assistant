@@ -1,8 +1,17 @@
+import os
+import httpx
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from src.backend.services.audio_service import transcribir_audio_a_texto, sintetizar_texto_a_audio
+
+
+
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
+
+
 
 app = FastAPI(title="FinancialAI - Backend")
 
@@ -13,6 +22,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
+@app.on_event("startup")
+async def warmup_ollama():
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": "hola", "stream": False},
+                timeout=60.0,
+            )
+        print(f"✅ Ollama precalentado con el modelo {OLLAMA_MODEL}")
+    except Exception as e:
+        print(f"⚠️ No se pudo precalentar Ollama: {e}")
+
+
 
 @app.get("/")
 def read_root():

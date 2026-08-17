@@ -10,6 +10,9 @@ langchain-core
 langchain-google-genai
 python-dotenv
 
+# --- CLIENTE HTTP (para Ollama) ---
+httpx
+
 # --- TRATAMIENTO DE AUDIO EN BACKEND ---
 gTTS
 pydub
@@ -17,3 +20,4 @@ SpeechRecognition
 
 # --- UTILIDADES (Mantén solo si los usas en tu lógica interna) ---
 faker
+pandas
