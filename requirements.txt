@@ -17,4 +17,3 @@ SpeechRecognition
 
 # --- UTILIDADES (Mantén solo si los usas en tu lógica interna) ---
 faker
-pandas

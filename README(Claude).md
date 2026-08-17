@@ -4,7 +4,7 @@ Asistente financiero conversacional con LLM local (Ollama), TTS local (Kokoro) y
 
 ## Requisitos previos
 
-- **Docker Desktop** (con WSL2 en Windows) — https://www.docker.com/products/docker-desktop/
+- **Docker**
 - **Node.js** (v18+) y npm — para el frontend
 - **App Expo Go** instalada en tu móvil (Android/iOS) — para probar la app sin compilar nada
 - Opcional: GPU NVIDIA con drivers actualizados, para acelerar Ollama y Kokoro (si no tienes, todo funciona igual en CPU, algo más lento)
@@ -16,13 +16,16 @@ Asistente financiero conversacional con LLM local (Ollama), TTS local (Kokoro) y
 ├── docker-compose.yml
 ├── Dockerfile
 ├── requirements.txt
+├── data/
+│  ├── finanzas.db
 ├── src/
-│   ├── app.py                          # FastAPI, punto de entrada del backend
-│   └── backend/
-│       ├── database.py                 # Init + seed de la base de datos SQLite
-│       └── services/
-│           └── audio_service.py        # STT / TTS
-└── frontend/                           # App React Native (Expo)
+   ├── app.py                          # FastAPI, punto de entrada del backend
+   ├── backend/
+   │   ├── database.py                 # Init + seed de la base de datos SQLite
+   │    └── services/
+   │        └── audio_service.py        # STT / TTS
+   │
+   └── frontend/                           # App React Native (Expo)
     ├── components/RecordButton.jsx
     ├── hooks/useVoiceRecorder.js
     ├── screens/{TextScreen,VoiceScreen}.jsx
@@ -90,10 +93,10 @@ El frontend corre fuera de Docker por ahora (más simple para probar en tu móvi
 ```powershell
 cd frontend
 npm install
-npx expo start --tunnel
+npx expo start --lan
 ```
 
-Escanea el QR con la app **Expo Go** desde tu móvil. La app detecta automáticamente la IP de tu PC en la red local (ver `config/api.js`), así que no hace falta configurar nada manualmente si el móvil y el PC están en la misma red — el flag `--tunnel` además permite probarlo aunque no estén en la misma red local.
+Escanea el QR con la app **Expo Go** desde tu móvil. La app detecta automáticamente la IP de tu PC en la red local (ver `config/api.js`), así que no hace falta configurar nada manualmente si el móvil y el PC están en la misma red 
 
 ## Variables de entorno (backend)
 
@@ -124,21 +127,13 @@ docker compose down -v
 ## Troubleshooting
 
 **El pull de Ollama falla con timeouts contra `r2.cloudflarestorage.com`**
-Algunas redes (campus universitarios, ciertos ISPs) bloquean ese storage concreto de Cloudflare. Confírmalo probando `curl.exe -v https://dd20bb891979d25aebc8bec07b2b3bbc.r2.cloudflarestorage.com` desde tu terminal, fuera de Docker: si también falla ahí, es la red, no Docker.
-
 Alternativa: descarga el `.gguf` del modelo manualmente desde Hugging Face (`https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF`, variante `q4_k_m`) y créalo como modelo local:
-```powershell
+
+```powershell (desde Descargas o donde hayas guardado el .gguf)
 docker cp .\qwen2.5-3b-instruct-q4_k_m.gguf reto_ia_ollama:/tmp/model.gguf
 docker exec -it reto_ia_ollama sh -c "echo 'FROM /tmp/model.gguf' > /tmp/Modelfile"
 docker exec -it reto_ia_ollama ollama create qwen2.5:3b-instruct -f /tmp/Modelfile
 ```
-Usar el mismo nombre (`qwen2.5:3b-instruct`) que el tag oficial evita tener que tocar nada más en el compose.
-
-**Docker Desktop tarda mucho en arrancar tras un `wsl --shutdown`**
-Es normal que tarde algo más de lo habitual (reinicializa las distros WSL2 desde cero). Si pasan más de 5 minutos en "Starting...", cierra Docker Desktop del todo y vuelve a abrirlo.
-
-**El móvil no conecta con el backend**
-Asegúrate de que el móvil y el PC están en la misma red Wi-Fi, o usa `npx expo start --tunnel` para evitar depender de la red local.
 
 ## Créditos técnicos
 
