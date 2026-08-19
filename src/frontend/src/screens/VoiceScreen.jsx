@@ -1,5 +1,5 @@
 import { View, StyleSheet } from "react-native";
-import VoiceButton from "../components/RecordButton";
+import VoiceButton from "../components/RecordButton/RecordButton";
 
 export default function VoiceScreen() {
   return (

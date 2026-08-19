@@ -63,3 +63,5 @@ def sintetizar_texto_a_audio(texto: str) -> bytes:
     except Exception as e:
         print(f"❌ Error en TTS: {e}")
         return b""
+
+        
