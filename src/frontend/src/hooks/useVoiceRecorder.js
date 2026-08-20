@@ -19,8 +19,11 @@ export function useVoiceRecorder() {
   const playerStatus = useAudioPlayerStatus(player);
   const hasPermission = useRef(false);
 
+  // Lock síncrono: evita que un segundo toque dispare una transición
+  // mientras la anterior sigue en curso (React aún no ha repintado el
+  // nuevo `status`, así que confiar solo en `status` deja una ventana
+  // de carrera entre toques rápidos).
   const busyRef = useRef(false);
-
 
   useEffect(() => {
     (async () => {
@@ -57,34 +60,6 @@ export function useVoiceRecorder() {
     });
   }
 
-  const stopRecordingAndSend = useCallback(async () => {
-    await recorder.stop();
-    const uri = recorder.uri;
-    if (!uri) {
-      setStatus("idle");
-      return;
-    }
-    setStatus("sending");
-    try {
-      const responseBlob = await sendVoiceRecording(uri);
-      const dataUri = await blobToDataUri(responseBlob);
-      player.replace({ uri: dataUri });
-      player.play();
-      setStatus("playing");
-      cleanupFile(uri);
-    } catch (err) {
-      console.error("Error enviando audio al backend:", err);
-      setStatus("idle");
-      cleanupFile(uri);
-    }
-  }, [recorder, player]);
-
-  const interruptPlaybackAndRecord = useCallback(async () => {
-    player.pause();
-    await startRecording();
-  }, [player, startRecording]);
-
-
   function cleanupFile(uri) {
     try {
       const file = new File(uri);
@@ -96,16 +71,64 @@ export function useVoiceRecorder() {
     }
   }
 
+  const stopRecordingAndSend = useCallback(async () => {
+    // Estado "sending" YA, antes de cualquier await — así el botón
+    // refleja el bloqueo al instante, no cuando React decida repintar.
+    setStatus("sending");
+
+    let uri;
+    try {
+      await recorder.stop();
+      uri = recorder.uri;
+    } catch (err) {
+      console.error("Error al parar la grabación:", err);
+      setStatus("idle");
+      return;
+    }
+
+    if (!uri) {
+      setStatus("idle");
+      return;
+    }
+
+    try {
+      const responseBlob = await sendVoiceRecording(uri);
+      const dataUri = await blobToDataUri(responseBlob);
+      player.replace({ uri: dataUri });
+      player.play();
+      setStatus("playing");
+    } catch (err) {
+      console.error("Error enviando audio al backend:", err);
+      setStatus("idle");
+    } finally {
+      cleanupFile(uri);
+    }
+  }, [recorder, player]);
+
+  const interruptPlaybackAndRecord = useCallback(async () => {
+    player.pause();
+    await startRecording();
+  }, [player, startRecording]);
+
   const toggle = useCallback(async () => {
-    switch (status) {
-      case "idle":
-        return startRecording();
-      case "recording":
-        return stopRecordingAndSend();
-      case "playing":
-        return interruptPlaybackAndRecord();
-      case "sending":
-        return; // ignoramos toques mientras esperamos al backend
+    if (busyRef.current) return; // toque ignorado: hay una transición en curso
+    busyRef.current = true;
+    try {
+      switch (status) {
+        case "idle":
+          await startRecording();
+          break;
+        case "recording":
+          await stopRecordingAndSend();
+          break;
+        case "playing":
+          await interruptPlaybackAndRecord();
+          break;
+        case "sending":
+          break; // no debería llegar aquí (busyRef ya lo bloquea antes), pero por claridad
+      }
+    } finally {
+      busyRef.current = false;
     }
   }, [status, startRecording, stopRecordingAndSend, interruptPlaybackAndRecord]);
 

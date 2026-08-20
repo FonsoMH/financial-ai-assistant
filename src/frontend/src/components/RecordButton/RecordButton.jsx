@@ -9,14 +9,20 @@ const AnimatedView = Animated.createAnimatedComponent(View);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 export default function RecordButton() {
-  const { active, isPlaying, toggle } = useVoiceRecorder();
+  const { active, isPlaying, isSending, toggle } = useVoiceRecorder();
 
   const { scale, spin, pulseRadius, pulseOpacity } = useRecordButtonAnimation(active);
   const wavePath = useSpeakingWave(isPlaying);
 
   return (
-    <Pressable onPress={toggle}>
-      <AnimatedView style={[styles.container, { transform: [{ scale }] }]}>
+    <Pressable onPress={toggle} disabled={isSending} >
+        <AnimatedView
+        style={[
+          styles.container,
+          { transform: [{ scale }] },
+          isSending && styles.containerSending,
+        ]}
+      >
         <Animated.View style={{ transform: [{ rotate: spin }] }}>
           <Svg width={140} height={140}>
             <Defs>
@@ -63,6 +69,7 @@ export default function RecordButton() {
 
 const styles = StyleSheet.create({
   container: { width: 140, height: 140, justifyContent: "center", alignItems: "center" },
+  containerSending: { opacity: 0.5 },
   core: { position: "absolute", width: 100, height: 100, borderRadius: 50, justifyContent: "center", alignItems: "center" },
   image: { width: 100, height: 100, resizeMode: "contain" },
   pulseSvg: { position: "absolute", width: 200, height: 200, left: -30, top: -30 },
