@@ -1,239 +1,119 @@
-// hooks/useVoiceRecorder.js
-import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useAudioRecorder,
-  AudioModule,
+  useAudioPlayer,
+  useAudioPlayerStatus,
   RecordingPresets,
   setAudioModeAsync,
-  createAudioPlayer,
+  requestRecordingPermissionsAsync,
 } from "expo-audio";
 import { File } from "expo-file-system";
 import { sendVoiceRecording } from "../services/voiceApi";
 
-// Antes el modo de audio se cambiaba entre "grabación" y "reproducción" en
-// CADA turno, con una espera fija de 500ms para dejar que el cambio de
-// sesión se asentara a nivel de SO (AVAudioSession en iOS). Ese coste se
-// pagaba en cada mensaje de la conversación — era la causa real de la
-// lentitud, no un bug puntual.
-//
-// El modo "grabación" permite reproducir audio igualmente, así que fijamos
-// el modo de audio UNA sola vez al montar el hook y no lo tocamos más.
-async function configureAudioModeOnce() {
-  try {
-    await setAudioModeAsync({
-      playsInSilentMode: true,
-      allowsRecording: true,
-    });
-  } catch (err) {
-    console.log("ERROR configurando el modo de audio:", err);
-  }
-}
-
-const STATUS = {
-  IDLE: "idle",
-  RECORDING: "recording",
-  SENDING: "sending",
-  PLAYING: "playing",
-};
-
+// Estados posibles: idle -> recording -> sending -> playing -> idle
+// Desde "playing" se puede volver directamente a "recording" (interrupción)
 export function useVoiceRecorder() {
-  const [status, setStatusState] = useState(STATUS.IDLE);
+  const [status, setStatus] = useState("idle");
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const player = useAudioPlayer(null);
+  const playerStatus = useAudioPlayerStatus(player);
+  const hasPermission = useRef(false);
 
-  // Espejo en ref del estado: lo necesitamos porque toggle() y los
-  // callbacks async leen el estado "actual" en un momento arbitrario, y
-  // una closure de useState quedaría desactualizada (stale) entre
-  // renders. Es la ÚNICA pieza de estado "extra" que necesitamos, frente
-  // a las tres del hook anterior.
-  const statusRef = useRef(STATUS.IDLE);
-  const setStatus = (next) => {
-    statusRef.current = next;
-    setStatusState(next);
-  };
+  const busyRef = useRef(false);
 
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const playerRef = useRef(null);
-
-  // Identifica el turno actual (grabar -> enviar -> reproducir). Cualquier
-  // callback async que llegue tarde (respuesta de red, evento del
-  // reproductor) compara su id contra este antes de tocar estado; si no
-  // coincide, el turno ya fue interrumpido y se ignora sin más.
-  const turnIdRef = useRef(0);
 
   useEffect(() => {
-    configureAudioModeOnce();
+    (async () => {
+      const perm = await requestRecordingPermissionsAsync();
+      hasPermission.current = perm.granted;
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    })();
   }, []);
 
-  function releasePlayer() {
-    const player = playerRef.current;
-    playerRef.current = null;
-    if (!player) return;
-    try { player.pause(); } catch (err) { console.log("Error al pausar el player:", err); }
-    try { player.remove(); } catch (err) { console.log("Error al hacer remove() del player:", err); }
-    try { player.release(); } catch (err) { console.log("Error al hacer release() del player:", err); }
-  }
-
-  function cleanupFile(uri) {
-    try {
-      const file = new File(uri);
-      if (file.exists) file.delete();
-    } catch (err) {
-      console.log("No se pudo borrar el archivo temporal:", err);
+  // Cuando termina de sonar la respuesta del backend, volvemos a idle
+  useEffect(() => {
+    if (status === "playing" && playerStatus.didJustFinish) {
+      setStatus("idle");
     }
-  }
+  }, [playerStatus.didJustFinish, status]);
 
-  async function startRecording() {
-    const myTurn = ++turnIdRef.current;
-    releasePlayer();
-
-    const permission = await AudioModule.requestRecordingPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permiso denegado", "Necesito acceso al micrófono para grabar.");
-      if (myTurn === turnIdRef.current) setStatus(STATUS.IDLE);
-      return;
+  const startRecording = useCallback(async () => {
+    if (!hasPermission.current) {
+      const perm = await requestRecordingPermissionsAsync();
+      hasPermission.current = perm.granted;
+      if (!perm.granted) return;
     }
+    await recorder.prepareToRecordAsync();
+    recorder.record();
+    setStatus("recording");
+  }, [recorder]);
 
-    try {
-      await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
-    } catch (err) {
-      console.log("ERROR en startRecording:", err);
-      if (myTurn === turnIdRef.current) {
-        Alert.alert("Error", "No se pudo iniciar la grabación.");
-        setStatus(STATUS.IDLE);
-      }
-      return;
-    }
-
-    if (myTurn === turnIdRef.current) setStatus(STATUS.RECORDING);
-  }
-
-  async function stopRecordingAndSend() {
-    const myTurn = turnIdRef.current;
-    setStatus(STATUS.SENDING);
-
-    let uri;
-    try {
-      await audioRecorder.stop();
-      uri = audioRecorder.uri;
-    } catch (err) {
-      console.log("ERROR al parar la grabación:", err);
-      if (myTurn === turnIdRef.current) setStatus(STATUS.IDLE);
-      return;
-    }
-
-    if (!uri) {
-      console.log("⚠️ No hay URI de grabación");
-      if (myTurn === turnIdRef.current) setStatus(STATUS.IDLE);
-      return;
-    }
-
-    // Defensivo: si el fichero no existe o está vacío, no llamamos al
-    // backend (fallaría con un "Network request failed" engañoso).
-    try {
-      const file = new File(uri);
-      if (!file.exists || file.size === 0) {
-        console.log(`⚠️ Grabación inválida (exists=${file.exists}, size=${file.size}) en ${uri}`);
-        Alert.alert("Grabación vacía", "No se ha podido grabar audio, inténtalo de nuevo.");
-        cleanupFile(uri);
-        if (myTurn === turnIdRef.current) setStatus(STATUS.IDLE);
-        return;
-      }
-    } catch (err) {
-      console.log("ERROR comprobando el fichero de audio:", err);
-      Alert.alert("Grabación vacía", "No se ha podido grabar audio, inténtalo de nuevo.");
-      cleanupFile(uri);
-      if (myTurn === turnIdRef.current) setStatus(STATUS.IDLE);
-      return;
-    }
-
-    let blob;
-    try {
-      blob = await sendVoiceRecording(uri);
-    } catch (err) {
-      cleanupFile(uri);
-      if (myTurn === turnIdRef.current) {
-        const message = err.name === "AbortError"
-          ? "El backend no respondió a tiempo."
-          : "No se pudo conectar con el backend.";
-        Alert.alert("Error", message);
-        setStatus(STATUS.IDLE);
-      }
-      console.log("ERROR al enviar el audio al backend:", err);
-      return;
-    }
-    cleanupFile(uri);
-
-    // Si mientras se enviaba el usuario ya interrumpió (nuevo turno en
-    // marcha), no seguimos: esta respuesta ya es obsoleta.
-    if (myTurn !== turnIdRef.current) return;
-
-    try {
-      await playAudioBlob(blob, myTurn);
-    } catch (err) {
-      console.log("ERROR al reproducir el audio:", err);
-      if (myTurn === turnIdRef.current) setStatus(STATUS.IDLE);
-    }
-  }
-
-  function playAudioBlob(blob, myTurn) {
+  function blobToDataUri(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        if (myTurn !== turnIdRef.current) { resolve(); return; }
-
-        try {
-          const player = createAudioPlayer({ uri: reader.result });
-          playerRef.current = player;
-
-          player.addListener("playbackStatusUpdate", (playerStatus) => {
-            if (myTurn !== turnIdRef.current) return;
-            if (playerStatus.didJustFinish) {
-              setStatus(STATUS.IDLE);
-            }
-          });
-
-          player.play();
-          setStatus(STATUS.PLAYING);
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      };
+      reader.onloadend = () => resolve(reader.result);
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
   }
 
-  async function toggle() {
-    switch (statusRef.current) {
-      case STATUS.IDLE:
-        await startRecording();
-        break;
+  const stopRecordingAndSend = useCallback(async () => {
+    await recorder.stop();
+    const uri = recorder.uri;
+    if (!uri) {
+      setStatus("idle");
+      return;
+    }
+    setStatus("sending");
+    try {
+      const responseBlob = await sendVoiceRecording(uri);
+      const dataUri = await blobToDataUri(responseBlob);
+      player.replace({ uri: dataUri });
+      player.play();
+      setStatus("playing");
+      cleanupFile(uri);
+    } catch (err) {
+      console.error("Error enviando audio al backend:", err);
+      setStatus("idle");
+      cleanupFile(uri);
+    }
+  }, [recorder, player]);
 
-      case STATUS.RECORDING:
-        await stopRecordingAndSend();
-        break;
+  const interruptPlaybackAndRecord = useCallback(async () => {
+    player.pause();
+    await startRecording();
+  }, [player, startRecording]);
 
-      case STATUS.PLAYING:
-        // Barge-in: cortar la reproducción en curso y ponerse a grabar.
-        turnIdRef.current++; // invalida el turno de reproducción actual
-        releasePlayer();
-        await startRecording();
-        break;
 
-      case STATUS.SENDING:
-        // Ya hay una petición en curso: ignoramos el toque en vez de
-        // necesitar un busyRef aparte para protegernos de dobles pulsos.
-        break;
+  function cleanupFile(uri) {
+    try {
+      const file = new File(uri);
+      if (file.exists) {
+        file.delete();
+      }
+    } catch (err) {
+      console.log("No se pudo borrar el archivo temporal:", err);
     }
   }
 
+  const toggle = useCallback(async () => {
+    switch (status) {
+      case "idle":
+        return startRecording();
+      case "recording":
+        return stopRecordingAndSend();
+      case "playing":
+        return interruptPlaybackAndRecord();
+      case "sending":
+        return; // ignoramos toques mientras esperamos al backend
+    }
+  }, [status, startRecording, stopRecordingAndSend, interruptPlaybackAndRecord]);
+
   return {
     status,
-    active: status === STATUS.RECORDING,
-    isPlaying: status === STATUS.PLAYING,
-    isSending: status === STATUS.SENDING,
+    active: status === "recording",
+    isSending: status === "sending",
+    isPlaying: status === "playing",
     toggle,
   };
 }
