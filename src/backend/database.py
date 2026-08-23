@@ -5,6 +5,8 @@ import random
 from datetime import datetime, timedelta
 
 fake = Faker('es_ES')
+random.seed(42)  # Pa que sean los mismos datos aleatorios
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "../../data/finanzas.db")
 
 def init_db():
@@ -166,7 +168,7 @@ def seed_data():
         "Entradas concierto", "Café", "Cervezas", "Almuerzo"
     ]
 
-    saldo_acumulado = 12000.0 
+    saldo_acumulado = 5000.0 
     movimientos = []
 
     # 1. Ingresos fijos (12 Nóminas)
@@ -225,7 +227,7 @@ def seed_data():
 
     # 6. Gastos cotidianos aleatorios (600 movimientos sin duplicación de suscripciones)
     print("🛍️ Insertando gastos cotidianos aleatorios...")
-    for _ in range(600):
+    for _ in range(345):
         mes_elegido = random.choice(meses)
         dia_aleatorio = str(random.randint(1, 28)).zfill(2)
         hora_aleatoria = f"{str(random.randint(0, 23)).zfill(2)}:{str(random.randint(0, 59)).zfill(2)}:00"
