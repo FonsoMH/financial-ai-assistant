@@ -5,12 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from src.backend.services.audio_service import transcribir_audio_a_texto, sintetizar_texto_a_audio
-
-
-
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
-
+from src.backend.services.llm_service import procesar_mensaje, OLLAMA_BASE_URL, OLLAMA_MODEL
 
 
 app = FastAPI(title="FinancialAI - Backend")
@@ -22,7 +17,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 
 @app.on_event("startup")
@@ -39,11 +33,11 @@ async def warmup_ollama():
         print(f"⚠️ No se pudo precalentar Ollama: {e}")
 
 
-
 @app.get("/")
 def read_root():
     """Ruta de prueba para verificar que la API funciona"""
     return {"status": "ok", "message": "Backend de Financial AI funcionando perfectamente"}
+
 
 @app.post("/api/voice")
 async def procesar_voz(file: UploadFile = File(...)):
@@ -61,7 +55,8 @@ async def procesar_voz(file: UploadFile = File(...)):
         else:
             print(f"🎙️ STT: El usuario dijo -> '{texto_usuario}'")
 
-            respuesta_texto = f"Dijiste: {texto_usuario}"
+            respuesta_texto = await procesar_mensaje(texto_usuario)
+            print(f"🤖 LLM: {respuesta_texto}")
 
         audio_respuesta_bytes = sintetizar_texto_a_audio(respuesta_texto)
 

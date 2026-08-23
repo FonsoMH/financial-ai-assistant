@@ -5,7 +5,7 @@ import random
 from datetime import datetime, timedelta
 
 fake = Faker('es_ES')
-DB_PATH = os.path.join(os.path.dirname(__file__), '../data/finanzas.db')
+DB_PATH = os.path.join(os.path.dirname(__file__), "../../data/finanzas.db")
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
