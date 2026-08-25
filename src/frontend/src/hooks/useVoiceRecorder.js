@@ -8,7 +8,7 @@ import {
   requestRecordingPermissionsAsync,
 } from "expo-audio";
 import { File } from "expo-file-system";
-import { sendVoiceRecording } from "../services/voiceApi";
+import { sendVoiceRecordingStreaming } from "../services/voiceWebSockets";
 
 // Estados posibles: idle -> recording -> sending -> playing -> idle
 // Desde "playing" se puede volver directamente a "recording" (interrupción)
@@ -25,6 +25,12 @@ export function useVoiceRecorder() {
   // de carrera entre toques rápidos).
   const busyRef = useRef(false);
 
+  // Cola de audios pendientes de reproducir (llegan uno a uno por WebSocket)
+  // y la función para cancelar la conexión WS en curso si hace falta.
+  const audioQueueRef = useRef([]);
+  const isPlayingQueueRef = useRef(false);
+  const cancelWsRef = useRef(null);
+
   useEffect(() => {
     (async () => {
       const perm = await requestRecordingPermissionsAsync();
@@ -33,12 +39,33 @@ export function useVoiceRecorder() {
     })();
   }, []);
 
-  // Cuando termina de sonar la respuesta del backend, volvemos a idle
+  // Cuando termina de sonar un trozo de la cola, encadena el siguiente.
+  // Si no queda nada más y la respuesta ya ha terminado de llegar,
+  // volvemos a idle (esto lo decide playNextInQueue, es el único sitio
+  // que debe tocar el status al terminar de reproducir).
   useEffect(() => {
-    if (status === "playing" && playerStatus.didJustFinish) {
-      setStatus("idle");
+    if (playerStatus.didJustFinish) {
+      playNextInQueue();
     }
-  }, [playerStatus.didJustFinish, status]);
+  }, [playerStatus.didJustFinish]);
+
+  function playNextInQueue() {
+    const next = audioQueueRef.current.shift();
+    if (next) {
+      player.replace({ uri: next });
+      player.play();
+      isPlayingQueueRef.current = true;
+    } else {
+      isPlayingQueueRef.current = false;
+      // Si ya no hay más y la respuesta terminó, cerramos el turno.
+      // (streamEndedRef se marca en onEnd, ver stopRecordingAndSend)
+      if (streamEndedRef.current) {
+        setStatus("idle");
+      }
+    }
+  }
+
+  const streamEndedRef = useRef(false);
 
   const startRecording = useCallback(async () => {
     if (!hasPermission.current) {
@@ -50,15 +77,6 @@ export function useVoiceRecorder() {
     recorder.record();
     setStatus("recording");
   }, [recorder]);
-
-  function blobToDataUri(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
 
   function cleanupFile(uri) {
     try {
@@ -72,8 +90,6 @@ export function useVoiceRecorder() {
   }
 
   const stopRecordingAndSend = useCallback(async () => {
-    // Estado "sending" YA, antes de cualquier await — así el botón
-    // refleja el bloqueo al instante, no cuando React decida repintar.
     setStatus("sending");
 
     let uri;
@@ -91,22 +107,43 @@ export function useVoiceRecorder() {
       return;
     }
 
-    try {
-      const responseBlob = await sendVoiceRecording(uri);
-      const dataUri = await blobToDataUri(responseBlob);
-      player.replace({ uri: dataUri });
-      player.play();
-      setStatus("playing");
-    } catch (err) {
-      console.error("Error enviando audio al backend:", err);
-      setStatus("idle");
-    } finally {
-      cleanupFile(uri);
-    }
+    audioQueueRef.current = [];
+    isPlayingQueueRef.current = false;
+    streamEndedRef.current = false;
+
+    cancelWsRef.current = sendVoiceRecordingStreaming(uri, {
+      onChunk: (audioUri) => {
+        // El primer chunk que llega dispara el paso de "sending" a "playing"
+        // y arranca la reproducción; los siguientes solo se encolan.
+        if (!isPlayingQueueRef.current) {
+          setStatus("playing");
+          audioQueueRef.current.push(audioUri);
+          playNextInQueue();
+        } else {
+          audioQueueRef.current.push(audioUri);
+        }
+      },
+      onEnd: () => {
+        streamEndedRef.current = true;
+        // Si para cuando termina de llegar texto ya no queda nada sonando
+        // ni en cola, cerramos aquí; si no, playNextInQueue() lo cerrará
+        // en cuanto se vacíe la cola.
+        if (!isPlayingQueueRef.current && audioQueueRef.current.length === 0) {
+          setStatus("idle");
+        }
+      },
+      onError: (detail) => {
+        console.error("Error enviando audio al backend:", detail);
+        setStatus("idle");
+      },
+    });
   }, [recorder, player]);
 
   const interruptPlaybackAndRecord = useCallback(async () => {
     player.pause();
+    cancelWsRef.current?.();
+    audioQueueRef.current = [];
+    isPlayingQueueRef.current = false;
     await startRecording();
   }, [player, startRecording]);
 

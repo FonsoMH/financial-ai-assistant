@@ -8,7 +8,7 @@ USUARIO_ID_DEFAULT = 1
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect("data/finanzas.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

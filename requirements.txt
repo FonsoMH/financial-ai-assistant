@@ -2,6 +2,7 @@
 fastapi
 uvicorn
 python-multipart
+websockets
 
 # --- PROCESAMIENTO DE IA Y LLM ---
 langchain

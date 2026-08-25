@@ -1,6 +1,10 @@
 import os
+import re
 import json
+import time
 import httpx
+from datetime import datetime
+from typing import AsyncGenerator
 
 from src.backend.services import db_service
 
@@ -27,22 +31,63 @@ Esquema de la tabla `movimientos` en SQLite (usa exactamente estos nombres):
 - categoria TEXT (valores posibles: 'Gasolina', 'Supermercado', 'Comida', 'Ocio', 'Ropa', \
 'Salud', 'Hogar', 'Suscripciones', 'Nomina', 'Ingreso_Bizum', 'Gasto_Bizum')
 
+Fechas — MUY IMPORTANTE:
+- NUNCA calcules tú mismo fechas relativas ("este mes", "esta semana", "hace 3 días"). Usa \
+SIEMPRE las funciones nativas de fecha de SQLite en el SQL, que calculan la fecha real en el \
+momento de ejecutar la consulta:
+  - "este mes": strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now')
+  - "esta semana": fecha >= date('now', '-7 days')
+  - "hoy": date(fecha) = date('now')
+  - "el mes pasado": strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now', '-1 month')
+- No escribas un año o fecha concreta a mano salvo que el usuario la mencione explícitamente.
+
 Reglas:
 - Si la pregunta no necesita ninguna herramienta (saludo, charla general relacionada contigo \
-como asistente), responde directamente.
+como asistente), responde directamente, pero siempre indica que eres un agente financiero.
 - Si la pregunta NO tiene nada que ver con finanzas, banca o tus herramientas (por ejemplo, \
 temas de cultura general, el tiempo, chistes, recetas...), indícalo con amabilidad en una \
 frase corta y redirige hacia lo que sí puedes hacer. No intentes responderla igualmente.
+- Dile al usuario que cosas puede hacer contigo y que herramientas tienes disponibles, si no lo sabe.
 - Para cualquier pregunta sobre el histórico, usa SIEMPRE consultar_movimientos con SQL válido, \
 filtrando siempre por usuario_id = 1.
 - Nunca inventes cifras. Si una herramienta devuelve un error, explícaselo al usuario con \
 naturalidad, no expongas el error técnico tal cual.
+- Cuando cites una cantidad de dinero que venga de una herramienta, cópiala EXACTAMENTE tal \
+como aparece en el resultado (mismos dígitos, mismo punto/coma decimal). No la redondees, no \
+la reescribas de memoria, no hagas cálculos mentales con ella — transcríbela literalmente, \
+dígito por dígito.
+- Si el usuario pide "más detalles" sobre un gasto, categoría o periodo, NO te limites a repetir \
+el total que ya diste. Usa consultar_movimientos para desglosar por `concepto` dentro de esa \
+categoría/periodo (ej: SELECT concepto, COUNT(*) AS veces, SUM(cantidad) AS total FROM \
+movimientos WHERE categoria='Suscripciones' AND usuario_id=1 GROUP BY concepto) y cuéntale al \
+usuario ese desglose concreto — por ejemplo, en qué suscripciones concretas se le va el dinero, \
+o en qué tiendas ha gastado más en ropa.
+- Sé proactivo: cuando tenga sentido, termina tu respuesta con UNA sugerencia concreta y \
+relevante basada en los datos que ya conoces (por ejemplo, si acabas de dar el total de \
+gasolina, puedes ofrecer contarle en qué gasolineras ha gastado más). Evita preguntas genéricas \
+tipo "¿necesitas algo más?" — sé específico sobre qué podrías contarle a continuación.
 - NUNCA digas que una operación (como un Bizum) se ha completado si no acabas de recibir la \
 confirmación de la herramienta correspondiente EN ESTE MISMO TURNO. Si el usuario confirma una \
 acción pendiente (dice "confirmo", "sí", "hazlo", etc.), debes volver a invocar la herramienta \
 ahora mismo — nunca asumas que ya se ejecutó por el hecho de que se mencionó antes.
 - Sé breve: 1-3 frases, salvo que el usuario pida detalle.
 """
+
+_DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def _build_system_prompt() -> str:
+    """Añade la fecha/hora real actuales al system prompt en cada llamada,
+    para que el modelo no tenga que adivinarla de su entrenamiento (y para
+    que siga siendo correcta aunque el contenedor lleve días corriendo)."""
+    ahora = datetime.now()
+    dia_semana = _DIAS_SEMANA[ahora.weekday()]
+    contexto_fecha = (
+        f"\n\nContexto: hoy es {dia_semana}, {ahora.strftime('%Y-%m-%d')} "
+        f"(hora actual: {ahora.strftime('%H:%M')})."
+    )
+    return SYSTEM_PROMPT + contexto_fecha
+
 
 TOOLS = [
     {
@@ -146,6 +191,34 @@ def _parse_tool_args(raw_args) -> dict:
     return {}
 
 
+# Frontera de frase: punto/exclamación/interrogación seguido de espacio.
+# Heurística simple — no distingue "15.99€" (sin espacio detrás) de un punto
+# final real, así que decimales pegados no se cortan mal, pero abreviaturas
+# tipo "Sr. Pérez" sí podrían partirse antes de tiempo. Suficiente para el
+# alcance del reto.
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+async def _stream_ollama_chat(client: httpx.AsyncClient, messages: list[dict]) -> AsyncGenerator[str, None]:
+    """Produce trozos de texto (tokens/fragmentos) según los va devolviendo
+    Ollama, sin esperar a que la respuesta esté completa."""
+    async with client.stream(
+        "POST",
+        f"{OLLAMA_BASE_URL}/api/chat",
+        json={"model": OLLAMA_MODEL, "messages": messages, "stream": True},
+    ) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            chunk = data.get("message", {}).get("content", "")
+            if chunk:
+                yield chunk
+            if data.get("done"):
+                break
+
+
 async def procesar_mensaje(texto_usuario: str) -> str:
     """Orquesta la conversación con Ollama, incluyendo tool calling.
 
@@ -154,10 +227,9 @@ async def procesar_mensaje(texto_usuario: str) -> str:
     Devuelve directamente el texto en lenguaje natural listo para TTS.
     """
     _conversation_history.append({"role": "user", "content": texto_usuario})
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + _conversation_history
+    messages = [{"role": "system", "content": _build_system_prompt()}] + _conversation_history
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        # --- 1ª llamada: el LLM decide si necesita una herramienta ---
         response = await client.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json={
@@ -180,7 +252,6 @@ async def procesar_mensaje(texto_usuario: str) -> str:
         _conversation_history.append(assistant_message)
         messages.append(assistant_message)
 
-        # --- Ejecutamos cada tool call localmente (el LLM nunca toca la DB directamente) ---
         for call in tool_calls:
             func = call.get("function", {})
             name = func.get("name")
@@ -195,7 +266,6 @@ async def procesar_mensaje(texto_usuario: str) -> str:
             _conversation_history.append(tool_message)
             messages.append(tool_message)
 
-        # --- 2ª llamada: el LLM redacta la respuesta final con los resultados reales ---
         response_final = await client.post(
             f"{OLLAMA_BASE_URL}/api/chat",
             json={
@@ -211,3 +281,91 @@ async def procesar_mensaje(texto_usuario: str) -> str:
         _conversation_history.append({"role": "assistant", "content": final_content})
         _trim_history()
         return final_content
+
+
+async def procesar_mensaje_streaming(texto_usuario: str) -> AsyncGenerator[str, None]:
+    """Igual que procesar_mensaje, pero produce frases completas en cuanto
+    están listas — pensado para sintetizar cada una a audio sin esperar a
+    que el modelo termine toda la respuesta.
+
+    El primer paso (decidir si hace falta una herramienta) NO se streamea:
+    necesitamos el JSON completo del tool_call para poder parsearlo. El
+    streaming se aplica a la redacción de la respuesta final, que es la
+    parte más larga y la que de verdad importa para la latencia percibida.
+
+    Lleva prints de temporización (⏱️) para poder diagnosticar en los logs
+    dónde se va el tiempo exactamente. Quítalos cuando ya no los necesites.
+    """
+    t0 = time.monotonic()
+    _conversation_history.append({"role": "user", "content": texto_usuario})
+    messages = [{"role": "system", "content": _build_system_prompt()}] + _conversation_history
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": messages,
+                "tools": TOOLS,
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        assistant_message = response.json().get("message", {})
+        tool_calls = assistant_message.get("tool_calls")
+        print(f"⏱️ 1ª llamada (decidir herramienta): {time.monotonic() - t0:.2f}s")
+
+        if not tool_calls:
+            final_content = assistant_message.get("content", "").strip() or "No he podido generar una respuesta."
+            _conversation_history.append({"role": "assistant", "content": final_content})
+            _trim_history()
+            yield final_content
+            return
+
+        _conversation_history.append(assistant_message)
+        messages.append(assistant_message)
+
+        t_tools = time.monotonic()
+        for call in tool_calls:
+            func = call.get("function", {})
+            name = func.get("name")
+            args = _parse_tool_args(func.get("arguments", {}))
+
+            print(f"🔧 Tool call: {name}({args})")
+
+            handler = TOOL_DISPATCH.get(name)
+            resultado = handler(args) if handler else {"error": f"Herramienta desconocida: {name}"}
+
+            tool_message = {"role": "tool", "content": json.dumps(resultado, ensure_ascii=False)}
+            _conversation_history.append(tool_message)
+            messages.append(tool_message)
+        print(f"⏱️ Ejecución de herramienta(s): {time.monotonic() - t_tools:.2f}s")
+
+        buffer = ""
+        full_text = ""
+        primera_frase_en = None
+        t_stream = time.monotonic()
+        async for chunk in _stream_ollama_chat(client, messages):
+            buffer += chunk
+            full_text += chunk
+            while True:
+                match = _SENTENCE_END_RE.search(buffer)
+                if not match:
+                    break
+                sentence = buffer[: match.start()]
+                buffer = buffer[match.end():]
+                if sentence.strip():
+                    if primera_frase_en is None:
+                        primera_frase_en = time.monotonic() - t_stream
+                        print(f"⏱️ Primera frase generada tras: {primera_frase_en:.2f}s (desde el inicio de la 2ª llamada)")
+                    yield sentence.strip()
+
+        if buffer.strip():
+            yield buffer.strip()
+
+        print(f"⏱️ Generación completa de la respuesta: {time.monotonic() - t_stream:.2f}s")
+        print(f"⏱️ TOTAL desde que llega el mensaje: {time.monotonic() - t0:.2f}s")
+
+        final_content = full_text.strip() or "No he podido generar una respuesta."
+        _conversation_history.append({"role": "assistant", "content": final_content})
+        _trim_history()
