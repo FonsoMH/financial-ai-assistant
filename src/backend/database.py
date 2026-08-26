@@ -112,8 +112,9 @@ def seed_data():
 
     # Histórico de 12 meses reales
     meses = [
-        "2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12",
-        "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"
+        "2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02",
+        "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08",
+        "2026-09"
     ]
 
     historico_datos = []
@@ -168,7 +169,7 @@ def seed_data():
         "Entradas concierto", "Café", "Cervezas", "Almuerzo"
     ]
 
-    saldo_acumulado = 5000.0 
+    saldo_acumulado = 50000.0 
     movimientos = []
 
     # 1. Ingresos fijos (12 Nóminas)

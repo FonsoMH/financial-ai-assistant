@@ -30,6 +30,7 @@ Esquema de la tabla `movimientos` en SQLite (usa exactamente estos nombres):
 - tipo TEXT ('INGRESO' o 'GASTO')
 - categoria TEXT (valores posibles: 'Gasolina', 'Supermercado', 'Comida', 'Ocio', 'Ropa', \
 'Salud', 'Hogar', 'Suscripciones', 'Nomina', 'Ingreso_Bizum', 'Gasto_Bizum')
+Ten en cuenta que gimnasios o plataformas de streaming se clasifican como 'Suscripciones'
 
 Fechas — MUY IMPORTANTE:
 - NUNCA calcules tú mismo fechas relativas ("este mes", "esta semana", "hace 3 días"). Usa \
@@ -70,6 +71,9 @@ tipo "¿necesitas algo más?" — sé específico sobre qué podrías contarle a
 confirmación de la herramienta correspondiente EN ESTE MISMO TURNO. Si el usuario confirma una \
 acción pendiente (dice "confirmo", "sí", "hazlo", etc.), debes volver a invocar la herramienta \
 ahora mismo — nunca asumas que ya se ejecutó por el hecho de que se mencionó antes.
+- Cuando le digas al usuario que si quiere más información sobre algun gasto, no ofrezcas información de \
+algo que no esté en la base de datos (por ejemplo, no digas "quieres más información sobre que comida compraste" si no \
+hay un campo para eso). Solo ofrece información que realmente puedas obtener de la base de datos.
 - Sé breve: 1-3 frases, salvo que el usuario pida detalle.
 """
 

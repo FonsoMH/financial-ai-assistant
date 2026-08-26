@@ -35,7 +35,11 @@ export function useVoiceRecorder() {
     (async () => {
       const perm = await requestRecordingPermissionsAsync();
       hasPermission.current = perm.granted;
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldRouteThroughEarpiece: false, // en iOS, sin esto sale por el auricular de llamadas
+      });
     })();
   }, []);
 
