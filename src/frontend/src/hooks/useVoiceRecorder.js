@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Platform } from "react-native";
 import {
   useAudioRecorder,
   useAudioPlayer,
@@ -38,9 +39,30 @@ export function useVoiceRecorder() {
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
-        shouldRouteThroughEarpiece: false, // en iOS, sin esto sale por el auricular de llamadas
+        shouldRouteThroughEarpiece: false, // solo tiene efecto en Android
       });
     })();
+  }, []);
+
+  // En iOS, `shouldRouteThroughEarpiece` no hace nada (limitación conocida
+  // de expo-audio, issue #43086) — el enrutamiento al auricular viene de
+  // la categoría "PlayAndRecord" en sí. La única forma de forzar el
+  // altavoz principal es desactivar `allowsRecording` justo antes de
+  // reproducir, y reactivarlo antes de grabar.
+  //
+  // OJO: alternar el modo de audio por turno es justo lo que evitábamos
+  // (costaba varios segundos de asentamiento de la sesión). Aquí lo
+  // limitamos a iOS y a una vez por turno (no por cada chunk de audio),
+  // pero mide la latencia real en iOS tras aplicar esto — si reaparece
+  // el retraso, es la señal de que este trade-off no compensa.
+  const ensureIosPlaybackRoute = useCallback(async () => {
+    if (Platform.OS !== "ios") return;
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+  }, []);
+
+  const ensureIosRecordingRoute = useCallback(async () => {
+    if (Platform.OS !== "ios") return;
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
   }, []);
 
   // Cuando termina de sonar un trozo de la cola, encadena el siguiente.
@@ -77,10 +99,11 @@ export function useVoiceRecorder() {
       hasPermission.current = perm.granted;
       if (!perm.granted) return;
     }
+    await ensureIosRecordingRoute();
     await recorder.prepareToRecordAsync();
     recorder.record();
     setStatus("recording");
-  }, [recorder]);
+  }, [recorder, ensureIosRecordingRoute]);
 
   function cleanupFile(uri) {
     try {
@@ -116,10 +139,11 @@ export function useVoiceRecorder() {
     streamEndedRef.current = false;
 
     cancelWsRef.current = sendVoiceRecordingStreaming(uri, {
-      onChunk: (audioUri) => {
+      onChunk: async (audioUri) => {
         // El primer chunk que llega dispara el paso de "sending" a "playing"
         // y arranca la reproducción; los siguientes solo se encolan.
         if (!isPlayingQueueRef.current) {
+          await ensureIosPlaybackRoute();
           setStatus("playing");
           audioQueueRef.current.push(audioUri);
           playNextInQueue();

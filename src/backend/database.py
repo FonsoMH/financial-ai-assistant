@@ -169,7 +169,7 @@ def seed_data():
         "Entradas concierto", "Café", "Cervezas", "Almuerzo"
     ]
 
-    saldo_acumulado = 50000.0 
+    saldo_acumulado = 5000.0 
     movimientos = []
 
     # 1. Ingresos fijos (12 Nóminas)

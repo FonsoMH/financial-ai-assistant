@@ -13,6 +13,8 @@ services:
       - OLLAMA_MODEL=qwen2.5:7b-instruct
       - OLLAMA_KEEP_ALIVE=15m
       - PYTHONUNBUFFERED=1
+      - TTS_SPEED=1.2
+      - TTS_VOLUME_DB=0.0
       
     command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 30
     depends_on:

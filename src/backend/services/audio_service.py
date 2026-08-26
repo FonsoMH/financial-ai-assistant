@@ -1,7 +1,14 @@
+import os
 import speech_recognition as sr
 from gtts import gTTS
 from io import BytesIO
 from pydub import AudioSegment
+from pydub.effects import speedup
+
+# Configurables por entorno
+TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
+TTS_VOLUME_DB = float(os.getenv("TTS_VOLUME_DB", "0.0"))
+
 
 def transcribir_audio_a_texto(audio_bytes: bytes) -> tuple[str, str | None]:
     """Convierte bytes de audio en texto (Speech-to-Text).
@@ -53,15 +60,37 @@ def transcribir_audio_a_texto(audio_bytes: bytes) -> tuple[str, str | None]:
 
 
 def sintetizar_texto_a_audio(texto: str) -> bytes:
-    """Convierte texto en bytes de audio MP3 (Text-to-Speech)."""
+    """Convierte texto en bytes de audio MP3 (Text-to-Speech) con gTTS,
+    aplicando velocidad/volumen configurables por post-procesado con pydub."""
     try:
         tts = gTTS(text=texto, lang='es', slow=False)
         fp = BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
-        return fp.read()
+
+        # Si no hay ajustes que aplicar, devolvemos el MP3 de gTTS tal cual
+        # (nos ahorramos el coste de decodificar/recodificar por nada).
+        if TTS_SPEED == 1.0 and TTS_VOLUME_DB == 0.0:
+            return fp.read()
+
+        audio = AudioSegment.from_file(fp, format="mp3")
+
+        if TTS_VOLUME_DB != 0.0:
+            audio = audio + TTS_VOLUME_DB  # ganancia en dB, admite negativos
+
+        if TTS_SPEED > 1.0:
+            audio = speedup(audio, playback_speed=TTS_SPEED)
+        elif TTS_SPEED < 1.0:
+            # pydub.effects.speedup no soporta bien ralentizar (<1.0) —
+            # su algoritmo de recorte de fragmentos está pensado solo para
+            # acelerar. Para más lento, la única vía fiable con gTTS es su
+            # propio modo `slow=True` (fijo, no es un factor ajustable).
+            print("⚠️ TTS_SPEED < 1.0 no está soportado con este método; se ignora.")
+
+        out = BytesIO()
+        audio.export(out, format="mp3")
+        out.seek(0)
+        return out.read()
     except Exception as e:
         print(f"❌ Error en TTS: {e}")
         return b""
-
-        

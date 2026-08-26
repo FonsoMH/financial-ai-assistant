@@ -83,6 +83,7 @@ const styles = StyleSheet.create({
     width: "100%",
     paddingHorizontal: 16,
     paddingBottom: 4, 
+    height: 80,
   },
   inputWrapper: {
     flexDirection: "row",
