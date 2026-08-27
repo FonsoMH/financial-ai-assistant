@@ -82,8 +82,7 @@ _DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
 
 def _build_system_prompt() -> str:
     """Añade la fecha/hora real actuales al system prompt en cada llamada,
-    para que el modelo no tenga que adivinarla de su entrenamiento (y para
-    que siga siendo correcta aunque el contenedor lleve días corriendo)."""
+    para que el modelo no tenga que adivinarla de su entrenamiento."""
     ahora = datetime.now()
     dia_semana = _DIAS_SEMANA[ahora.weekday()]
     contexto_fecha = (
@@ -166,6 +165,7 @@ TOOL_DISPATCH = {
 # esté corriendo — se pierde si reinicias el contenedor, y es compartido por
 # el único usuario del MVP (no hay separación por sesión/usuario todavía).
 _conversation_history: list[dict] = []
+#TODO ver como hacer que el contenedor no se reinicie solo , que sino se pierde
 
 # Cuántos turnos (pares usuario+asistente, aprox.) conservar como máximo,
 # para no dejar crecer el contexto sin límite y perjudicar la latencia.

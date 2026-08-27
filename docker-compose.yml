@@ -11,7 +11,7 @@ services:
       - WATCHPACK_POLLING=true
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:7b-instruct
-      - OLLAMA_KEEP_ALIVE=15m
+      - OLLAMA_KEEP_ALIVE=1h
       - PYTHONUNBUFFERED=1
       - TTS_SPEED=1.2
       - TTS_VOLUME_DB=0.0

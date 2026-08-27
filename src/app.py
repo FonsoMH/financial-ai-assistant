@@ -31,7 +31,7 @@ async def warmup_ollama():
             await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={"model": OLLAMA_MODEL, "prompt": "hola", "stream": False},
-                timeout=60.0,
+                timeout=120.0,
             )
         print(f"✅ Ollama precalentado con el modelo {OLLAMA_MODEL}")
     except Exception as e:
