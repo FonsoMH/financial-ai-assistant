@@ -12,6 +12,7 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:7b-instruct
       - OLLAMA_KEEP_ALIVE=1h
+      - OLLAMA_TEMPERATURE=0.2
       - PYTHONUNBUFFERED=1
       - TTS_SPEED=1.2
       - TTS_VOLUME_DB=0.0

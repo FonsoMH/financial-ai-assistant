@@ -1,5 +1,6 @@
 import os
 import httpx
+from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -27,21 +28,45 @@ app.add_middleware(
 @app.on_event("startup")
 async def warmup_ollama():
     try:
+        # Timeout generoso a propósito: cargar el modelo en frío desde disco
+        # puede tardar más de un minuto, y si abortamos antes de que termine,
+        # Ollama cancela la carga en curso — el siguiente mensaje real vuelve
+        # a pagar el coste completo desde cero. Mejor esperar de verdad aquí,
+        # una vez, que dejar que le toque al primer usuario.
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={"model": OLLAMA_MODEL, "prompt": "hola", "stream": False},
-                timeout=120.0,
+                timeout=180.0,
             )
         print(f"✅ Ollama precalentado con el modelo {OLLAMA_MODEL}")
     except Exception as e:
-        print(f"⚠️ No se pudo precalentar Ollama: {e}")
+        print(f"⚠️ No se pudo precalentar Ollama: {e!r}")
 
 
 @app.get("/")
 def read_root():
     """Ruta de prueba para verificar que la API funciona"""
     return {"status": "ok", "message": "Backend de Financial AI funcionando perfectamente"}
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/api/chat")
+async def procesar_chat(payload: ChatRequest):
+    """Contraparte en texto de /api/voice: mismo motor de razonamiento
+    (procesar_mensaje), mismo hilo de conversación compartido con la voz,
+    sin pasar por STT/TTS. Si el cliente cancela la petición (AbortController
+    en el frontend), FastAPI cancela esta corrutina sola — no hace falta
+    manejarlo a mano aquí.
+    """
+    if not payload.message or not payload.message.strip():
+        raise HTTPException(status_code=400, detail="Mensaje vacío")
+
+    respuesta = await procesar_mensaje(payload.message)
+    return {"response": respuesta}
 
 
 @app.post("/api/voice")

@@ -11,8 +11,19 @@ from src.backend.services import db_service
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 
+# Temperature baja a propósito: para tool calling interesa que el modelo
+# sea consistente y predecible, no "creativo". El valor por defecto de
+# Ollama (~0.8) deja demasiado margen para que decida saltarse una
+# herramienta o pedir confirmación de forma errática.
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
+
 SYSTEM_PROMPT = """Eres el asistente financiero de un banco. Hablas en español, de forma clara, \
 breve y natural, como si hablaras con el cliente por teléfono.\
+
+REGLA DE ORO, por encima de cualquier otra cosa: si la pregunta menciona saldo, dinero, \
+gastos, movimientos, categorías o Bizum, SIEMPRE usa la herramienta correspondiente ANTES de \
+redactar ninguna respuesta — incluso si también quieres saludar o presentarte. Nunca redactes \
+una cifra sin haber recibido antes el resultado real de una herramienta en este mismo turno.
 
 Tienes acceso a estas herramientas:
 - consultar_saldo: para saber cuánto dinero tiene disponible el usuario.
@@ -30,7 +41,6 @@ Esquema de la tabla `movimientos` en SQLite (usa exactamente estos nombres):
 - tipo TEXT ('INGRESO' o 'GASTO')
 - categoria TEXT (valores posibles: 'Gasolina', 'Supermercado', 'Comida', 'Ocio', 'Ropa', \
 'Salud', 'Hogar', 'Suscripciones', 'Nomina', 'Ingreso_Bizum', 'Gasto_Bizum')
-Ten en cuenta que gimnasios o plataformas de streaming se clasifican como 'Suscripciones'
 
 Fechas — MUY IMPORTANTE:
 - NUNCA calcules tú mismo fechas relativas ("este mes", "esta semana", "hace 3 días"). Usa \
@@ -43,12 +53,19 @@ momento de ejecutar la consulta:
 - No escribas un año o fecha concreta a mano salvo que el usuario la mencione explícitamente.
 
 Reglas:
-- Si la pregunta no necesita ninguna herramienta (saludo, charla general relacionada contigo \
-como asistente), responde directamente, pero siempre indica que eres un agente financiero.
+- Si el mensaje es SOLO un saludo o charla general sin ninguna pregunta financiera real (ej. \
+"hola", "buenos días", "¿qué tal?"), responde brevemente y menciona que eres un agente \
+financiero. NO hagas esto en mensajes que ya contienen una pregunta real — ve directo a la \
+herramienta en esos casos, sin presentarte primero.
+- IMPORTANTE: si un mensaje combina un saludo con una pregunta real (ej. "hola, cuánto tengo"), \
+el saludo NO te exime de usar la herramienta correspondiente para la parte de la pregunta. \
+Responde a la pregunta con la herramienta — el saludo no necesita más que un "hola" simple, si \
+acaso, no una presentación completa.
 - Si la pregunta NO tiene nada que ver con finanzas, banca o tus herramientas (por ejemplo, \
 temas de cultura general, el tiempo, chistes, recetas...), indícalo con amabilidad en una \
 frase corta y redirige hacia lo que sí puedes hacer. No intentes responderla igualmente.
-- Dile al usuario que cosas puede hacer contigo y que herramientas tienes disponibles, si no lo sabe.
+- Explica qué puedes hacer y qué herramientas tienes SOLO si el usuario lo pregunta \
+explícitamente (ej. "qué puedes hacer", "en qué me ayudas") — no lo repitas en cada respuesta.
 - Para cualquier pregunta sobre el histórico, usa SIEMPRE consultar_movimientos con SQL válido, \
 filtrando siempre por usuario_id = 1.
 - Nunca inventes cifras. Si una herramienta devuelve un error, explícaselo al usuario con \
@@ -71,9 +88,6 @@ tipo "¿necesitas algo más?" — sé específico sobre qué podrías contarle a
 confirmación de la herramienta correspondiente EN ESTE MISMO TURNO. Si el usuario confirma una \
 acción pendiente (dice "confirmo", "sí", "hazlo", etc.), debes volver a invocar la herramienta \
 ahora mismo — nunca asumas que ya se ejecutó por el hecho de que se mencionó antes.
-- Cuando le digas al usuario que si quiere más información sobre algun gasto, no ofrezcas información de \
-algo que no esté en la base de datos (por ejemplo, no digas "quieres más información sobre que comida compraste" si no \
-hay un campo para eso). Solo ofrece información que realmente puedas obtener de la base de datos.
 - Sé breve: 1-3 frases, salvo que el usuario pida detalle.
 """
 
@@ -82,7 +96,8 @@ _DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
 
 def _build_system_prompt() -> str:
     """Añade la fecha/hora real actuales al system prompt en cada llamada,
-    para que el modelo no tenga que adivinarla de su entrenamiento."""
+    para que el modelo no tenga que adivinarla de su entrenamiento (y para
+    que siga siendo correcta aunque el contenedor lleve días corriendo)."""
     ahora = datetime.now()
     dia_semana = _DIAS_SEMANA[ahora.weekday()]
     contexto_fecha = (
@@ -165,7 +180,6 @@ TOOL_DISPATCH = {
 # esté corriendo — se pierde si reinicias el contenedor, y es compartido por
 # el único usuario del MVP (no hay separación por sesión/usuario todavía).
 _conversation_history: list[dict] = []
-#TODO ver como hacer que el contenedor no se reinicie solo , que sino se pierde
 
 # Cuántos turnos (pares usuario+asistente, aprox.) conservar como máximo,
 # para no dejar crecer el contexto sin límite y perjudicar la latencia.
@@ -209,7 +223,7 @@ async def _stream_ollama_chat(client: httpx.AsyncClient, messages: list[dict]) -
     async with client.stream(
         "POST",
         f"{OLLAMA_BASE_URL}/api/chat",
-        json={"model": OLLAMA_MODEL, "messages": messages, "stream": True},
+        json={"model": OLLAMA_MODEL, "messages": messages, "stream": True, "options": {"temperature": OLLAMA_TEMPERATURE}},
     ) as response:
         response.raise_for_status()
         async for line in response.aiter_lines():
@@ -241,6 +255,7 @@ async def procesar_mensaje(texto_usuario: str) -> str:
                 "messages": messages,
                 "tools": TOOLS,
                 "stream": False,
+                "options": {"temperature": OLLAMA_TEMPERATURE},
             },
         )
         response.raise_for_status()
@@ -276,6 +291,7 @@ async def procesar_mensaje(texto_usuario: str) -> str:
                 "model": OLLAMA_MODEL,
                 "messages": messages,
                 "stream": False,
+                "options": {"temperature": OLLAMA_TEMPERATURE},
             },
         )
         response_final.raise_for_status()
@@ -312,12 +328,14 @@ async def procesar_mensaje_streaming(texto_usuario: str) -> AsyncGenerator[str, 
                 "messages": messages,
                 "tools": TOOLS,
                 "stream": False,
+                "options": {"temperature": OLLAMA_TEMPERATURE},
             },
         )
         response.raise_for_status()
         assistant_message = response.json().get("message", {})
         tool_calls = assistant_message.get("tool_calls")
         print(f"⏱️ 1ª llamada (decidir herramienta): {time.monotonic() - t0:.2f}s")
+        print(f"📏 Tokens de contexto usados: {response.json().get('prompt_eval_count')} / 4096 (aprox.)")
 
         if not tool_calls:
             final_content = assistant_message.get("content", "").strip() or "No he podido generar una respuesta."

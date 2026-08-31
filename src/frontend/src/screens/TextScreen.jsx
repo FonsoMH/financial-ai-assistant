@@ -1,65 +1,137 @@
-import { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   StyleSheet,
-  Text,
-  TextInput,
   View,
+  TextInput,
   KeyboardAvoidingView,
   Platform,
-  TouchableWithoutFeedback,
-  Keyboard,
   Pressable,
+  FlatList,
 } from "react-native";
+
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Send } from "lucide-react-native";
+import { Send, Square } from "lucide-react-native";
+import BubbleText from "../components/BubbleText/BubbleText";
 
 export default function TextScreen() {
   const [text, setText] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSend = () => {
-    if (!text.trim()) return;
-    console.log("Mensaje enviado:", text);
+  const abortControllerRef = useRef(null);
+  const flatListRef = useRef(null);
+
+  const handleSendOrCancel = async () => {
+    if (isLoading) {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      setIsLoading(false);
+      return;
+    }
+
+    const trimmedText = text.trim();
+    if (!trimmedText) return;
+
+    const userMessage = {
+      id: Date.now().toString(),
+      sender: "user",
+      text: trimmedText,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
     setText("");
+    setIsLoading(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch("YOUR_BACKEND_URL/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message: trimmedText }),
+        signal: controller.signal,
+      });
+
+      const data = await response.json();
+
+      const botMessage = {
+        id: (Date.now() + 1).toString(),
+        sender: "bot",
+        text: data.response || data.message || "Sin respuesta",
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
+    } catch (error) {
+      if (error.name === "AbortError") {
+        console.log("Petición cancelada por el usuario");
+      } else {
+        console.error("Error conectando con el backend:", error);
+      }
+    } finally {
+      setIsLoading(false);
+      abortControllerRef.current = null;
+    }
   };
 
   return (
-    // edges evita que la zona segura empuje el contenido desde abajo
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.innerContainer}>
-            {/* Área reservada para la lista de mensajes */}
-            <View style={styles.content}>
-              <Text style={styles.textMessage}>HOLA SOY TEXTO</Text>
-            </View>
+        <View style={styles.innerContainer}>
+          {/* Lista de conversación */}
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={(item) => item.id}
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() =>
+              flatListRef.current?.scrollToEnd({ animated: true })
+            }
+            renderItem={({ item }) => (
+              <BubbleText sender={item.sender} text={item.text} />
+            )}
+          />
 
-            {/* Contenedor inferior con campo de texto y botón */}
-            <View style={styles.bottomContainer}>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.insertText}
-                  placeholder="Escribe aquí..."
-                  placeholderTextColor="#8B949E"
-                  value={text}
-                  onChangeText={setText}
-                  multiline={true}
-                />
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.sendButton,
-                    pressed && styles.sendButtonPressed,
-                  ]}
-                  onPress={handleSend}
-                >
-                  <Send color="#FFFFFF" size={16} />
-                </Pressable>
-              </View>
+          {/* Contenedor inferior con campo de texto y botón */}
+          <View style={styles.bottomContainer}>
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={styles.insertText}
+                placeholder="Escribe aquí..."
+                placeholderTextColor="#8B949E"
+                value={text}
+                onChangeText={setText}
+                multiline={true}
+                editable={!isLoading}
+              />
+              <Pressable
+                style={({ pressed }) => [
+                  styles.sendButton,
+                  isLoading && styles.cancelButton,
+                  pressed &&
+                    (isLoading
+                      ? styles.cancelButtonPressed
+                      : styles.sendButtonPressed),
+                ]}
+                onPress={handleSendOrCancel}
+              >
+                {isLoading ? (
+                  <Square size={14} color="#FFFFFF" fill="#FFFFFF" />
+                ) : (
+                  <Send style={styles.sendIcon} size={17} />
+                )}
+              </Pressable>
             </View>
           </View>
-        </TouchableWithoutFeedback>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -72,18 +144,21 @@ const styles = StyleSheet.create({
   },
   innerContainer: {
     flex: 1,
-    justifyContent: "space-between", 
   },
-  content: {
+  list: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
+  },
+  listContent: {
+    flexGrow: 1,
+    justifyContent: "flex-end", 
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 8,
   },
   bottomContainer: {
     width: "100%",
     paddingHorizontal: 16,
-    paddingBottom: 4, 
-    height: 80,
+    paddingBottom: 8,
   },
   inputWrapper: {
     flexDirection: "row",
@@ -115,9 +190,13 @@ const styles = StyleSheet.create({
   sendButtonPressed: {
     backgroundColor: "#015368",
   },
-  textMessage: {
-    color: "#007AFF",
-    fontSize: 18,
-    fontWeight: "bold",
+  cancelButton: {
+    backgroundColor: "#E53E3E",
+  },
+  cancelButtonPressed: {
+    backgroundColor: "#9B2C2C",
+  },
+  sendIcon: {
+    color: "#FFFFFF",
   },
 });
