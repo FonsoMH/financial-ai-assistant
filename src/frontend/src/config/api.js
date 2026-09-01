@@ -19,3 +19,4 @@ const getBaseUrl = () => {
 export const API_BASE_URL = getBaseUrl();
 export const VOICE_ENDPOINT = `${API_BASE_URL}/api/voice`;
 export const WS_VOICE_ENDPOINT = `${API_BASE_URL.replace(/^http/, "ws")}/ws/voice`;
+export const CHAT_ENDPOINT = `${API_BASE_URL}/api/chat`;

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   StyleSheet,
   View,
@@ -7,74 +7,31 @@ import {
   Platform,
   Pressable,
   FlatList,
+  Keyboard,
 } from "react-native";
 
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Send, Square } from "lucide-react-native";
 import BubbleText from "../components/BubbleText/BubbleText";
+import TypingIndicator from "../components/BubbleText/TypingIndicator";
+import { useChatMessages } from "../hooks/useChatMessages";
 
 export default function TextScreen() {
   const [text, setText] = useState("");
-  const [messages, setMessages] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  const abortControllerRef = useRef(null);
+  const { messages, isLoading, sendMessage, cancelMessage } = useChatMessages();
   const flatListRef = useRef(null);
 
-  const handleSendOrCancel = async () => {
+  const handleSendOrCancel = () => {
     if (isLoading) {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      setIsLoading(false);
+      cancelMessage();
       return;
     }
 
     const trimmedText = text.trim();
     if (!trimmedText) return;
 
-    const userMessage = {
-      id: Date.now().toString(),
-      sender: "user",
-      text: trimmedText,
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
     setText("");
-    setIsLoading(true);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    try {
-      const response = await fetch("YOUR_BACKEND_URL/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message: trimmedText }),
-        signal: controller.signal,
-      });
-
-      const data = await response.json();
-
-      const botMessage = {
-        id: (Date.now() + 1).toString(),
-        sender: "bot",
-        text: data.response || data.message || "Sin respuesta",
-      };
-
-      setMessages((prev) => [...prev, botMessage]);
-    } catch (error) {
-      if (error.name === "AbortError") {
-        console.log("Petición cancelada por el usuario");
-      } else {
-        console.error("Error conectando con el backend:", error);
-      }
-    } finally {
-      setIsLoading(false);
-      abortControllerRef.current = null;
-    }
+    sendMessage(trimmedText);
   };
 
   return (
@@ -98,6 +55,7 @@ export default function TextScreen() {
             renderItem={({ item }) => (
               <BubbleText sender={item.sender} text={item.text} />
             )}
+            ListFooterComponent={isLoading ? <TypingIndicator /> : null}
           />
 
           {/* Contenedor inferior con campo de texto y botón */}
@@ -150,7 +108,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     flexGrow: 1,
-    justifyContent: "flex-end", 
+    justifyContent: "flex-end",
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 8,

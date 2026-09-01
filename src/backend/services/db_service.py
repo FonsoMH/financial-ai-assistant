@@ -3,7 +3,6 @@ from datetime import datetime
 
 from src.backend.database import DB_PATH
 
-# El unico usuario que hay
 USUARIO_ID_DEFAULT = 1
 
 
@@ -76,7 +75,7 @@ def hacer_bizum(destinatario: str, importe: float, concepto: str = "Bizum", usua
 _PREFIJOS_PERMITIDOS = ("select", "with")
 _PALABRAS_PROHIBIDAS = (
     "insert", "update", "delete", "drop", "alter", "attach", "detach",
-    "pragma", "create", "replace", "vacuum", "--", ";",
+    "pragma", "create", "replace", "vacuum", "--",
 )
 
 
@@ -84,7 +83,16 @@ def ejecutar_consulta_sql(sql: str, limite_filas: int = 50) -> dict:
     if not sql or not sql.strip():
         return {"error": "Consulta vacía"}
 
-    sql_normalizado = sql.strip().lower()
+    sql = sql.strip()
+    # Un ";" final es SQL válido y habitual (el modelo lo añade por
+    # costumbre) — lo quitamos antes de validar/ejecutar. sqlite3 solo
+    # permite una sentencia por `execute()` de todos modos, así que un
+    # intento real de encadenar sentencias malicioso fallaría igual
+    # aunque quitemos este ";" de la lista de palabras prohibidas.
+    if sql.endswith(";"):
+        sql = sql[:-1].strip()
+
+    sql_normalizado = sql.lower()
 
     if not sql_normalizado.startswith(_PREFIJOS_PERMITIDOS):
         return {"error": "Solo se permiten consultas SELECT"}

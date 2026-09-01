@@ -65,7 +65,9 @@ async def procesar_chat(payload: ChatRequest):
     if not payload.message or not payload.message.strip():
         raise HTTPException(status_code=400, detail="Mensaje vacío")
 
+    print(f"💬 Usuario (texto): '{payload.message}'")
     respuesta = await procesar_mensaje(payload.message)
+    print(f"🤖 LLM (texto): '{respuesta}'")
     return {"response": respuesta}
 
 
