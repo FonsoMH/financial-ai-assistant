@@ -10,42 +10,74 @@ from src.backend.services import db_service
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
-
-# Temperature baja a propósito: para tool calling interesa que el modelo
-# sea consistente y predecible, no "creativo". El valor por defecto de
-# Ollama (~0.8) deja demasiado margen para que decida saltarse una
-# herramienta o pedir confirmación de forma errática.
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
+# Subido de 4096 (el valor por defecto en tu GPU) porque el prompt ha
+# crecido bastante con el esquema de 4 tablas + 5 herramientas. Vigila
+# la VRAM (nvidia-smi) la primera vez que lo pruebes con este valor.
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
 
 SYSTEM_PROMPT = """Eres el asistente financiero de un banco. Hablas en español, de forma clara, \
-breve y natural, como si hablaras con el cliente por teléfono.\
+breve y natural, como si hablaras con el cliente por teléfono.
 
 REGLA DE ORO, por encima de cualquier otra cosa: si la pregunta menciona saldo, dinero, \
-gastos, movimientos, categorías o Bizum, SIEMPRE usa la herramienta correspondiente ANTES de \
-redactar ninguna respuesta — incluso si también quieres saludar o presentarte. Nunca redactes \
-una cifra sin haber recibido antes el resultado real de una herramienta en este mismo turno.
+gastos, ingresos, movimientos, categorías, suscripciones, tiendas, fondos o inversiones, \
+SIEMPRE usa la herramienta correspondiente ANTES de redactar ninguna respuesta — incluso si \
+también quieres saludar o presentarte. Nunca redactes una cifra sin haber recibido antes el \
+resultado real de una herramienta en este mismo turno.
 
 Tienes acceso a estas herramientas:
 - consultar_saldo: para saber cuánto dinero tiene disponible el usuario.
 - hacer_bizum: para enviar dinero a un contacto. Úsala SOLO si el usuario pide explícitamente \
 enviar, mandar o pasar dinero a alguien.
-- consultar_movimientos: para responder preguntas sobre el histórico de movimientos (gastos, \
-ingresos, categorías, fechas concretas). Escribes tú mismo la sentencia SQL SELECT.
+- consultar_datos: ejecuta una consulta SQL SELECT contra las tablas financieras del usuario \
+(movimientos, fondos_disponibles, fondos_historico, inversiones_usuario) para responder \
+cualquier pregunta sobre su histórico, sus fondos disponibles o sus inversiones actuales. \
+Escribes tú mismo la sentencia SQL.
+- hacer_inversion: invierte una cantidad de dinero en un fondo concreto. Úsala SOLO cuando el \
+usuario confirme explícitamente que quiere invertir, con fondo e importe claros.
+- retirar_inversion: retira (total o parcialmente) una inversión existente en un fondo, \
+devolviendo el dinero al saldo disponible.
 
-Esquema de la tabla `movimientos` en SQLite (usa exactamente estos nombres):
-- id INTEGER
-- usuario_id INTEGER
+Esquema de las tablas en SQLite (usa exactamente estos nombres):
+
+`movimientos` — histórico de ingresos y gastos:
+- id, usuario_id INTEGER
 - fecha TEXT (formato 'YYYY-MM-DD HH:MM:SS')
-- concepto TEXT
+- concepto TEXT (nombre de la tienda/origen, ej. 'Mercadona', 'Netflix', 'Bizum enviado a...')
 - cantidad REAL (siempre positiva; el signo lo indica la columna tipo)
 - tipo TEXT ('INGRESO' o 'GASTO')
-- categoria TEXT (valores posibles: 'Gasolina', 'Supermercado', 'Comida', 'Ocio', 'Ropa', \
-'Salud', 'Hogar', 'Suscripciones', 'Nomina', 'Ingreso_Bizum', 'Gasto_Bizum')
+- categoria TEXT ('Gasolina', 'Supermercado', 'Comida', 'Ocio', 'Ropa', 'Salud', 'Hogar', \
+'Suscripciones', 'Nomina', 'Ingreso_Bizum', 'Gasto_Bizum', 'Inversion', 'Rescate_Inversion')
+
+`fondos_disponibles` — catálogo de fondos de inversión ofrecidos por el banco:
+- id INTEGER, nombre TEXT, riesgo TEXT ('Bajo'/'Medio'/'Alto'/'Muy Alto')
+- rentabilidad_anual_esperada REAL (en % anual)
+
+`fondos_historico` — rentabilidad mensual real pasada de cada fondo:
+- fondo_id INTEGER (FK a fondos_disponibles.id), año_mes TEXT ('YYYY-MM')
+- rentabilidad_mes REAL (en % ese mes)
+
+`inversiones_usuario` — posiciones actuales del usuario:
+- usuario_id INTEGER, fondo_id INTEGER (FK a fondos_disponibles.id)
+- capital_invertido REAL (dinero actualmente invertido en ese fondo)
+
+Patrones SQL útiles:
+- Gasto por categoría/tienda: SELECT concepto, SUM(cantidad) AS total FROM movimientos WHERE \
+categoria='X' AND usuario_id=1 GROUP BY concepto ORDER BY total DESC
+- Suscripciones activas (con su precio): SELECT DISTINCT concepto, cantidad FROM movimientos \
+WHERE categoria='Suscripciones' AND usuario_id=1
+- Balance (ingresos - gastos) de un periodo: SELECT \
+SUM(CASE WHEN tipo='INGRESO' THEN cantidad ELSE 0 END) AS ingresos, \
+SUM(CASE WHEN tipo='GASTO' THEN cantidad ELSE 0 END) AS gastos FROM movimientos \
+WHERE usuario_id=1 AND strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now')
+- Fondos disponibles con su rentabilidad esperada: SELECT nombre, riesgo, \
+rentabilidad_anual_esperada FROM fondos_disponibles
+- Inversiones actuales del usuario: SELECT f.nombre, i.capital_invertido, f.riesgo FROM \
+inversiones_usuario i JOIN fondos_disponibles f ON i.fondo_id = f.id WHERE i.usuario_id=1
 
 Fechas — MUY IMPORTANTE:
 - NUNCA calcules tú mismo fechas relativas ("este mes", "esta semana", "hace 3 días"). Usa \
-SIEMPRE las funciones nativas de fecha de SQLite en el SQL, que calculan la fecha real en el \
-momento de ejecutar la consulta:
+SIEMPRE las funciones nativas de fecha de SQLite en el SQL:
   - "este mes": strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now')
   - "esta semana": fecha >= date('now', '-7 days')
   - "hoy": date(fecha) = date('now')
@@ -54,41 +86,39 @@ momento de ejecutar la consulta:
 
 Reglas:
 - Si el mensaje es SOLO un saludo o charla general sin ninguna pregunta financiera real (ej. \
-"hola", "buenos días", "¿qué tal?"), responde brevemente y menciona que eres un agente \
-financiero. NO hagas esto en mensajes que ya contienen una pregunta real — ve directo a la \
-herramienta en esos casos, sin presentarte primero.
+"hola", "buenos días", "¿qué tal?"), responde brevemente, indica que eres un agente financiero, \
+y ofrece 2-3 ejemplos concretos de lo que puedes hacer — por ejemplo: "puedes preguntarme \
+cuánto has gastado este mes, cuál es tu saldo, o si quieres invertir tus ahorros". NO hagas \
+esto en mensajes que ya contienen una pregunta real — ve directo a la herramienta en esos casos.
 - IMPORTANTE: si un mensaje combina un saludo con una pregunta real (ej. "hola, cuánto tengo"), \
-el saludo NO te exime de usar la herramienta correspondiente para la parte de la pregunta. \
-Responde a la pregunta con la herramienta — el saludo no necesita más que un "hola" simple, si \
-acaso, no una presentación completa.
-- Si la pregunta NO tiene nada que ver con finanzas, banca o tus herramientas (por ejemplo, \
-temas de cultura general, el tiempo, chistes, recetas...), indícalo con amabilidad en una \
-frase corta y redirige hacia lo que sí puedes hacer. No intentes responderla igualmente.
-- Explica qué puedes hacer y qué herramientas tienes SOLO si el usuario lo pregunta \
-explícitamente (ej. "qué puedes hacer", "en qué me ayudas") — no lo repitas en cada respuesta.
-- Para cualquier pregunta sobre el histórico, usa SIEMPRE consultar_movimientos con SQL válido, \
-filtrando siempre por usuario_id = 1.
+el saludo NO te exime de usar la herramienta correspondiente para la parte de la pregunta.
+- Si la pregunta NO tiene nada que ver con finanzas, banca o tus herramientas, indícalo con \
+amabilidad en una frase corta y redirige hacia lo que sí puedes hacer. No intentes responderla.
+- Explica en detalle qué puedes hacer SOLO si el usuario lo pregunta explícitamente (ej. "qué \
+puedes hacer") — no lo repitas en cada respuesta.
 - Nunca inventes cifras. Si una herramienta devuelve un error, explícaselo al usuario con \
 naturalidad, no expongas el error técnico tal cual.
 - Cuando cites una cantidad de dinero que venga de una herramienta, cópiala EXACTAMENTE tal \
 como aparece en el resultado (mismos dígitos, mismo punto/coma decimal). No la redondees, no \
-la reescribas de memoria, no hagas cálculos mentales con ella — transcríbela literalmente, \
-dígito por dígito.
-- Si el usuario pide "más detalles" sobre un gasto, categoría o periodo, NO te limites a repetir \
-el total que ya diste. Usa consultar_movimientos para desglosar por `concepto` dentro de esa \
-categoría/periodo (ej: SELECT concepto, COUNT(*) AS veces, SUM(cantidad) AS total FROM \
-movimientos WHERE categoria='Suscripciones' AND usuario_id=1 GROUP BY concepto) y cuéntale al \
-usuario ese desglose concreto — por ejemplo, en qué suscripciones concretas se le va el dinero, \
-o en qué tiendas ha gastado más en ropa.
+la reescribas de memoria — transcríbela literalmente. Si tienes que calcular un porcentaje \
+(ej. "el 20% de tus ahorros"), hazlo con cuidado y muestra el cálculo brevemente para que el \
+usuario pueda verificarlo.
+- Si el usuario pide "más detalles" sobre un gasto, categoría o periodo, usa consultar_datos \
+para desglosar por `concepto` y cuéntale ese desglose concreto.
 - Sé proactivo: cuando tenga sentido, termina tu respuesta con UNA sugerencia concreta y \
-relevante basada en los datos que ya conoces (por ejemplo, si acabas de dar el total de \
-gasolina, puedes ofrecer contarle en qué gasolineras ha gastado más). Evita preguntas genéricas \
-tipo "¿necesitas algo más?" — sé específico sobre qué podrías contarle a continuación.
-- NUNCA digas que una operación (como un Bizum) se ha completado si no acabas de recibir la \
-confirmación de la herramienta correspondiente EN ESTE MISMO TURNO. Si el usuario confirma una \
-acción pendiente (dice "confirmo", "sí", "hazlo", etc.), debes volver a invocar la herramienta \
-ahora mismo — nunca asumas que ya se ejecutó por el hecho de que se mencionó antes.
-- Sé breve: 1-3 frases, salvo que el usuario pida detalle.
+relevante. Evita preguntas genéricas tipo "¿necesitas algo más?".
+- PROACTIVIDAD DE INVERSIÓN — sigue este flujo cuando aplique: si el usuario pregunta cuánto \
+ha ahorrado, cuánto le ha quedado este mes, o similar, y el balance es positivo, ofrécele \
+invertir un porcentaje de ese ahorro. Si el usuario dice que sí quiere invertir (sin más \
+detalle), consulta fondos_disponibles y preséntale las opciones con su riesgo y rentabilidad \
+esperada, para que elija. Cuando el usuario indique fondo e importe/porcentaje concretos, \
+calcula el importe exacto en euros y usa hacer_inversion. No inviertas nada sin que el usuario \
+haya confirmado fondo e importe de forma explícita.
+- NUNCA digas que una operación (Bizum, inversión, retirada) se ha completado si no acabas de \
+recibir la confirmación de la herramienta correspondiente EN ESTE MISMO TURNO. Si el usuario \
+confirma una acción pendiente ("confirmo", "sí", "hazlo"), invoca la herramienta ahora mismo — \
+nunca asumas que ya se ejecutó.
+- Sé breve: 1-3 frases, salvo que el usuario pida detalle o estés listando fondos/desgloses.
 """
 
 _DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
@@ -96,8 +126,7 @@ _DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado",
 
 def _build_system_prompt() -> str:
     """Añade la fecha/hora real actuales al system prompt en cada llamada,
-    para que el modelo no tenga que adivinarla de su entrenamiento (y para
-    que siga siendo correcta aunque el contenedor lleve días corriendo)."""
+    para que el modelo no tenga que adivinarla de su entrenamiento."""
     ahora = datetime.now()
     dia_semana = _DIAS_SEMANA[ahora.weekday()]
     contexto_fecha = (
@@ -127,18 +156,9 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "destinatario": {
-                        "type": "string",
-                        "description": "Nombre del contacto al que enviar el dinero",
-                    },
-                    "importe": {
-                        "type": "number",
-                        "description": "Cantidad en euros a enviar",
-                    },
-                    "concepto": {
-                        "type": "string",
-                        "description": "Motivo del envío (opcional)",
-                    },
+                    "destinatario": {"type": "string", "description": "Nombre del contacto al que enviar el dinero"},
+                    "importe": {"type": "number", "description": "Cantidad en euros a enviar"},
+                    "concepto": {"type": "string", "description": "Motivo del envío (opcional)"},
                 },
                 "required": ["destinatario", "importe"],
             },
@@ -147,20 +167,54 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "consultar_movimientos",
+            "name": "consultar_datos",
             "description": (
-                "Ejecuta una consulta SQL SELECT contra la tabla `movimientos` para responder "
-                "preguntas sobre el histórico financiero del usuario."
+                "Ejecuta una consulta SQL SELECT contra las tablas financieras del usuario "
+                "(movimientos, fondos_disponibles, fondos_historico, inversiones_usuario) para "
+                "responder preguntas sobre su histórico, sus fondos o sus inversiones."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "sql": {
-                        "type": "string",
-                        "description": "Sentencia SQL SELECT válida en SQLite contra la tabla movimientos",
-                    },
+                    "sql": {"type": "string", "description": "Sentencia SQL SELECT válida en SQLite"},
                 },
                 "required": ["sql"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hacer_inversion",
+            "description": (
+                "Invierte una cantidad de dinero en un fondo concreto. Úsala solo cuando el "
+                "usuario haya confirmado explícitamente fondo e importe."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fondo": {"type": "string", "description": "Nombre (total o parcial) del fondo en el que invertir"},
+                    "importe": {"type": "number", "description": "Cantidad en euros a invertir"},
+                },
+                "required": ["fondo", "importe"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "retirar_inversion",
+            "description": (
+                "Retira dinero de una inversión existente en un fondo, devolviéndolo al saldo "
+                "disponible. Si no se indica importe, retira toda la posición en ese fondo."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fondo": {"type": "string", "description": "Nombre (total o parcial) del fondo del que retirar"},
+                    "importe": {"type": "number", "description": "Cantidad en euros a retirar (opcional: si se omite, se retira todo)"},
+                },
+                "required": ["fondo"],
             },
         },
     },
@@ -173,27 +227,26 @@ TOOL_DISPATCH = {
         importe=args.get("importe"),
         concepto=args.get("concepto", "Bizum"),
     ),
-    "consultar_movimientos": lambda args: db_service.ejecutar_consulta_sql(args.get("sql", "")),
+    "consultar_datos": lambda args: db_service.ejecutar_consulta_sql(args.get("sql", "")),
+    "hacer_inversion": lambda args: db_service.hacer_inversion(
+        fondo=args.get("fondo"),
+        importe=args.get("importe"),
+    ),
+    "retirar_inversion": lambda args: db_service.retirar_inversion(
+        fondo=args.get("fondo"),
+        importe=args.get("importe"),
+    ),
 }
 
-# Historial de conversación en memoria. Vive mientras el proceso del backend
-# esté corriendo — se pierde si reinicias el contenedor, y es compartido por
-# el único usuario del MVP (no hay separación por sesión/usuario todavía).
 _conversation_history: list[dict] = []
-
-# Cuántos turnos (pares usuario+asistente, aprox.) conservar como máximo,
-# para no dejar crecer el contexto sin límite y perjudicar la latencia.
 MAX_HISTORY_MESSAGES = 16
 
 
 def reset_conversation() -> None:
-    """Vacía el hilo de conversación — llámalo para empezar de cero."""
     _conversation_history.clear()
 
 
 def _trim_history() -> None:
-    # Nos quedamos con los últimos N mensajes, sin contar el system prompt
-    # (que se gestiona aparte, no vive dentro de _conversation_history).
     if len(_conversation_history) > MAX_HISTORY_MESSAGES:
         del _conversation_history[: len(_conversation_history) - MAX_HISTORY_MESSAGES]
 
@@ -209,21 +262,18 @@ def _parse_tool_args(raw_args) -> dict:
     return {}
 
 
-# Frontera de frase: punto/exclamación/interrogación seguido de espacio.
-# Heurística simple — no distingue "15.99€" (sin espacio detrás) de un punto
-# final real, así que decimales pegados no se cortan mal, pero abreviaturas
-# tipo "Sr. Pérez" sí podrían partirse antes de tiempo. Suficiente para el
-# alcance del reto.
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
 
+def _ollama_options() -> dict:
+    return {"temperature": OLLAMA_TEMPERATURE, "num_ctx": OLLAMA_NUM_CTX}
+
+
 async def _stream_ollama_chat(client: httpx.AsyncClient, messages: list[dict]) -> AsyncGenerator[str, None]:
-    """Produce trozos de texto (tokens/fragmentos) según los va devolviendo
-    Ollama, sin esperar a que la respuesta esté completa."""
     async with client.stream(
         "POST",
         f"{OLLAMA_BASE_URL}/api/chat",
-        json={"model": OLLAMA_MODEL, "messages": messages, "stream": True, "options": {"temperature": OLLAMA_TEMPERATURE}},
+        json={"model": OLLAMA_MODEL, "messages": messages, "stream": True, "options": _ollama_options()},
     ) as response:
         response.raise_for_status()
         async for line in response.aiter_lines():
@@ -238,12 +288,6 @@ async def _stream_ollama_chat(client: httpx.AsyncClient, messages: list[dict]) -
 
 
 async def procesar_mensaje(texto_usuario: str) -> str:
-    """Orquesta la conversación con Ollama, incluyendo tool calling.
-
-    Mantiene hilo con las llamadas anteriores (ver _conversation_history),
-    así que "Confirmo" o "¿y la semana pasada?" tienen contexto real.
-    Devuelve directamente el texto en lenguaje natural listo para TTS.
-    """
     _conversation_history.append({"role": "user", "content": texto_usuario})
     messages = [{"role": "system", "content": _build_system_prompt()}] + _conversation_history
 
@@ -255,7 +299,7 @@ async def procesar_mensaje(texto_usuario: str) -> str:
                 "messages": messages,
                 "tools": TOOLS,
                 "stream": False,
-                "options": {"temperature": OLLAMA_TEMPERATURE},
+                "options": _ollama_options(),
             },
         )
         response.raise_for_status()
@@ -275,12 +319,9 @@ async def procesar_mensaje(texto_usuario: str) -> str:
             func = call.get("function", {})
             name = func.get("name")
             args = _parse_tool_args(func.get("arguments", {}))
-
             print(f"🔧 Tool call: {name}({args})")
-
             handler = TOOL_DISPATCH.get(name)
             resultado = handler(args) if handler else {"error": f"Herramienta desconocida: {name}"}
-
             tool_message = {"role": "tool", "content": json.dumps(resultado, ensure_ascii=False)}
             _conversation_history.append(tool_message)
             messages.append(tool_message)
@@ -291,7 +332,7 @@ async def procesar_mensaje(texto_usuario: str) -> str:
                 "model": OLLAMA_MODEL,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": OLLAMA_TEMPERATURE},
+                "options": _ollama_options(),
             },
         )
         response_final.raise_for_status()
@@ -304,18 +345,6 @@ async def procesar_mensaje(texto_usuario: str) -> str:
 
 
 async def procesar_mensaje_streaming(texto_usuario: str) -> AsyncGenerator[str, None]:
-    """Igual que procesar_mensaje, pero produce frases completas en cuanto
-    están listas — pensado para sintetizar cada una a audio sin esperar a
-    que el modelo termine toda la respuesta.
-
-    El primer paso (decidir si hace falta una herramienta) NO se streamea:
-    necesitamos el JSON completo del tool_call para poder parsearlo. El
-    streaming se aplica a la redacción de la respuesta final, que es la
-    parte más larga y la que de verdad importa para la latencia percibida.
-
-    Lleva prints de temporización (⏱️) para poder diagnosticar en los logs
-    dónde se va el tiempo exactamente. Quítalos cuando ya no los necesites.
-    """
     t0 = time.monotonic()
     _conversation_history.append({"role": "user", "content": texto_usuario})
     messages = [{"role": "system", "content": _build_system_prompt()}] + _conversation_history
@@ -328,14 +357,14 @@ async def procesar_mensaje_streaming(texto_usuario: str) -> AsyncGenerator[str, 
                 "messages": messages,
                 "tools": TOOLS,
                 "stream": False,
-                "options": {"temperature": OLLAMA_TEMPERATURE},
+                "options": _ollama_options(),
             },
         )
         response.raise_for_status()
         assistant_message = response.json().get("message", {})
         tool_calls = assistant_message.get("tool_calls")
         print(f"⏱️ 1ª llamada (decidir herramienta): {time.monotonic() - t0:.2f}s")
-        print(f"📏 Tokens de contexto usados: {response.json().get('prompt_eval_count')} / 4096 (aprox.)")
+        print(f"📏 Tokens de contexto usados: {response.json().get('prompt_eval_count')} / {OLLAMA_NUM_CTX} (aprox.)")
 
         if not tool_calls:
             final_content = assistant_message.get("content", "").strip() or "No he podido generar una respuesta."
@@ -352,12 +381,9 @@ async def procesar_mensaje_streaming(texto_usuario: str) -> AsyncGenerator[str, 
             func = call.get("function", {})
             name = func.get("name")
             args = _parse_tool_args(func.get("arguments", {}))
-
             print(f"🔧 Tool call: {name}({args})")
-
             handler = TOOL_DISPATCH.get(name)
             resultado = handler(args) if handler else {"error": f"Herramienta desconocida: {name}"}
-
             tool_message = {"role": "tool", "content": json.dumps(resultado, ensure_ascii=False)}
             _conversation_history.append(tool_message)
             messages.append(tool_message)
@@ -379,7 +405,7 @@ async def procesar_mensaje_streaming(texto_usuario: str) -> AsyncGenerator[str, 
                 if sentence.strip():
                     if primera_frase_en is None:
                         primera_frase_en = time.monotonic() - t_stream
-                        print(f"⏱️ Primera frase generada tras: {primera_frase_en:.2f}s (desde el inicio de la 2ª llamada)")
+                        print(f"⏱️ Primera frase generada tras: {primera_frase_en:.2f}s")
                     yield sentence.strip()
 
         if buffer.strip():
